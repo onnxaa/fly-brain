@@ -1,6 +1,6 @@
-"""Caly mozg jednoczesnie: chunkowany forward 15M krawedzi (pyarrow stream) + readout MB opponent + motor efferent + DAN anti-Hebb na K->M.
-Forward: h = ReLU(x@Wself + sum_pre->post[(x_pre@Wmsg)*w]) po calym grafie, chunki 1M.
-Plastycznosc: tylko K->M (62k) jak w test_mb_opponent (szybkie), reszta mozgu zamrozona.
+"""Whole brain at once: chunked forward over 15M edges (pyarrow stream) + MB opponent readout + motor efferent + DAN anti-Hebb on K->M.
+Forward: h = ReLU(x@Wself + sum_pre->post[(x_pre@Wmsg)*w]) over the whole graph, 1M chunks.
+Plasticity: K->M only (62k) as in test_mb_opponent (fast), rest of the brain frozen.
 """
 import numpy as np, pandas as pd, time
 import pyarrow.parquet as pq
@@ -22,8 +22,8 @@ KC_glob = np.sort(loc2glob[KC_loc])
 MBON_glob = np.sort(loc2glob[MBON_loc])
 print(f"KC_glob={len(KC_glob)} MBON_glob={len(MBON_glob)}", flush=True)
 
-g = np.load("mb_groups.npz")  # approach/avoid w local MB (do wKM), nie global
-# wagi K->M init z |w| (jak w opponent): odtworz mape
+g = np.load("mb_groups.npz")  # approach/avoid in local MB (for wKM), not global
+# K->M weights init from |w| (as in opponent): rebuild the map
 pre_l, post_l = mb["pre"], mb["post"]
 w0 = np.abs(mb["weight"].astype(np.float32))
 isK = np.zeros(int(pre_l.max()+1), bool); isK[KC_loc] = True
@@ -77,7 +77,7 @@ def forward_full(bias):
     # MB readout z wKM
     r = np.zeros(len(mb_sorted_loc)); np.add.at(r, km_mi, kc_sp[km_ki]*wKM)
     app = r[[mb_loc_pos[a] for a in np.sort(g['approach'])]].mean() if len(g['approach']) else 0
-    # uwaga: g['approach'] to local-MB idx; mb_loc_pos klucze to local-MB idx -> ok
+    # note: g['approach'] holds local-MB idx; mb_loc_pos keys are local-MB idx -> ok
     avo_idx = [mb_loc_pos[a] for a in np.sort(g['avoid'])]
     app_idx = [mb_loc_pos[a] for a in np.sort(g['approach'])]
     mb_pref = float(r[app_idx].mean() - r[avo_idx].mean())
@@ -96,20 +96,20 @@ def depress(kc_mask, target_avoid):
     wKM[:] = (wKM*sc[km_mi]).astype(np.float32)
 
 def kc_mask_only(bias):
-    # lekka wersja: KC maska wymaga h, czyli i tak full forward; uzywamy forward_full i liczymy maske osobno? dla treningu potrzebujemy maski -> robimy forward raz i uzywamy readout
-    # tu: powtarzamy forward (akceptowalne przy 3 trialach)
+    # light version: KC mask needs h, i.e. a full forward anyway; we use forward_full and compute the mask separately? training needs masks -> one forward and reuse the readout
+    # here: repeat the forward (acceptable at 3 trials)
     return None
 
 print("before (full-brain forward)...", flush=True)
 pA_mb, pA_mo = forward_full(odorA); print(f" odorA: MBpref={pA_mb:.2f} motor={pA_mo:.4f} ({time.time()-t0:.0f}s)", flush=True)
 pB_mb, pB_mo = forward_full(odorB); print(f" odorB: MBpref={pB_mb:.2f} motor={pB_mo:.4f} ({time.time()-t0:.0f}s)", flush=True)
 
-# trening 3 triale: do maski KC uzyjemy szybkiego MB-only (jak opponent) zeby nie dublowac full forward;
-# forward_full i tak liczy KC z full grafu -> maske bierzemy z pomocniczego szybkiego liczenia? Nie: liczymy maske z full h.
-# Implementacja: w petli wywolaj forward_full (zwraca tez maske) — rozszerzamy: tu wywolujemy forward_full i depress na podstawie maski z OSTATNIEGO pelnego h.
-# Zeby nie przekomplikowac: uzyjemy масek z MB-only (bliskie) — nie, lepiej policzyc maske z full h wewnatrz forward_full.
-print("trening 3 triale (A+PAM slab-avoid, B+PPL1 slab-approach)...", flush=True)
-# przerabiamy forward_full na zwracajacy maske:
+# training 3 trials: for the KC mask we use fast MB-only (as in opponent) to avoid duplicating the full forward;
+# forward_full already computes KC from the full graph -> take the mask from a helper fast pass? No: compute the mask from full h.
+# Implementation: in the loop call forward_full (also returns the mask) - here we call forward_full and depress on the mask from the LAST full h.
+# To keep it simple: use masks from MB-only (close) - no, better compute the mask from full h inside forward_full.
+print("training 3 trials (A+PAM slab-avoid, B+PPL1 slab-approach)...", flush=True)
+# turn forward_full into a mask-returning variant:
 def forward_mask(bias):
     x = emb.copy(); x[bias] += 2.0
     agg = np.zeros((N, hid), dtype=np.float32)

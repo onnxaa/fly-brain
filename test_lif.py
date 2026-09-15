@@ -1,24 +1,24 @@
-"""LIF data-only v2: port rownan Shiu/Brian na numpy (bez Briana).
-Fix wzgledem v1 (test_lif_old.py):
- 1) znaki Dale'a zachowane (signed w, nie abs) - 11k hamujacych w MB + APL ze znakiem z danych
- 2) jednostki jak w Brianie: g-synapsa (mV), w_syn=0.275mV, tau_syn=5ms, t_mbr=20ms,
-    v0=v_rst=-52mV, vth=-45mV (STALY prog; v1 mial EL+Q*fan co przy fanie MBON~3056
-    dawalo Vth~-9mV i martwy MBON)
- 3) refrakcja 2ms + reset do v0 (v1: Vr=-65 > EL=-70, zero refrakcji -> ALPN 900Hz)
- 4) delay aksonalny 2ms (bufor, jak t_dly=1.8ms w Brianie; v1: instant)
- 5) drive przez g wagami Briana (wdrv=w_syn*250, nie skok v*M_DRIVE*fan)
- 6) APL jako 2 kolcowe neurony z PRAWDZIWYMI wagami KC->APL / APL->KC
-    (v1: wolny integrator graded tau=500ms -> za slaby, KC 13.8%).
-    JEDYNY parametr fizjologii: APL_VTH_FACTOR=4 (prog APL 4x wyzej: -24mV).
-    Uzasadnienie: APL to olbrzymi neuron (~3000 wejsc KC, ogromna powierzchnia
-    blony -> niskie R_we -> potrzeba ~x wiecej pradu do tej samej depolaryzacji;
-    bez tego pojedyncze olbrzymie synapsy K->APL (max 499) zapalaja APL do 200Hz
-    i dusza KC do 0% / MBON do ciszy). Dobrany do rzadkosci KC~5%
-    (kryterium Shiu: KC<5Hz i 5-10%), nie do konkretnych liczb Briana.
- 7) PROTOKOL: drive z prawdziwych wzorcow DoOR (alpn_patterns.npz, R=150 jak
-    assay_fit.py), nie polowki ALPN @150Hz (51300Hz lacznie vs ~2000Hz real -
-    25x za mocny, kazdy LIF - Brian tez: MBON 57Hz - eksploduje).
-Stale wylacznie z protokolu Briana/Shiu - zero strojenia pod fan.
+"""LIF data-only v2: Shiu/Brian equations ported to numpy (no Brian).
+Fixes vs v1 (test_lif_old.py):
+ 1) Dale signs kept (signed w, not abs) - 11k inhibitory in MB + APL with data signs
+ 2) Brian units: g-synapse (mV), w_syn=0.275mV, tau_syn=5ms, t_mbr=20ms,
+    v0=v_rst=-52mV, vth=-45mV (FIXED threshold; v1 had EL+Q*fan which at MBON fan~3056
+    gave Vth~-9mV and a dead MBON)
+ 3) 2ms refractory + reset to v0 (v1: Vr=-65 > EL=-70, zero refractory -> ALPN 900Hz)
+ 4) 2ms axonal delay (buffer, like t_dly=1.8ms in Brian; v1: instant)
+ 5) drive through g with Brian weights (wdrv=w_syn*250, not v jumps of M_DRIVE*fan)
+ 6) APL as 2 spiking neurons with REAL KC->APL / APL->KC weights
+    (v1: slow graded integrator tau=500ms -> too weak, KC 13.8%).
+    The ONLY physiology parameter: APL_VTH_FACTOR=4 (APL threshold 4x higher: -24mV).
+    Rationale: APL is a giant neuron (~3000 KC inputs, huge membrane area
+    -> low input resistance -> needs ~x more current for the same depolarization;
+    without it, single giant K->APL synapses (max 499) drive APL to 200Hz
+    and silence KC to 0% / MBON to quiet). Fit to KC sparsity ~5%
+    (Shiu criterion: KC<5Hz and 5-10%), not to specific Brian numbers.
+ 7) PROTOCOL: drive from real DoOR patterns (alpn_patterns.npz, R=150 like
+    assay_fit.py), not ALPN halves @150Hz (51300Hz total vs ~2000Hz real -
+    25x too strong, every LIF - Brian included: MBON 57Hz - explodes).
+Constants only from the Brian/Shiu protocol - zero fan tuning.
 """
 import numpy as np, time
 from collections import deque
@@ -30,7 +30,7 @@ ws = d["weight"].astype(np.float64)  # SIGNED
 ALPN, KC, MBON = d["inputs_ALPN"], d["KC"], d["MBON"]
 N = int(max(pre.max(), post.max()) + 1)
 
-# --- APL: prawdziwe wagi z konektomu (jak assay_apl.py) ---
+# --- APL: real connectome weights (like assay_apl.py) ---
 import pandas as _pd
 _comp = _pd.read_csv("Completeness_783.csv")
 _fly = _comp[_comp.columns[0]].values.astype("int64")
@@ -54,13 +54,13 @@ a2k_apl = np.array([_apl_id[int(p)] for p in _a2k["Presynaptic_Index"].values], 
 print(f"APL: in={len(k2a_w)} out={len(a2k_w)}", flush=True)
 del _con, _comp, _sup
 
-# --- rozszerzony graf N+2 (2x APL kolcowe, te same parametry LIF) ---
+# --- extended N+2 graph (2x spiking APL, same LIF params) ---
 nN = N + 2
 pre2 = np.concatenate([pre, k2a_pre, N + a2k_apl])
 post2 = np.concatenate([post, N + k2a_apl, a2k_post])
-w2 = np.concatenate([ws, k2a_w, -a2k_w])  # APL->KC hamujace (dane: Exc=-1)
+w2 = np.concatenate([ws, k2a_w, -a2k_w])  # APL->KC inhibitory (data: Exc=-1)
 
-# --- drive z prawdziwych wzorcow DoOR (jak assay_fit.py) ---
+# --- drive from real DoOR patterns (like assay_fit.py) ---
 pat = np.load("alpn_patterns.npz")
 AG = pat["ALPN_glob"]
 
@@ -69,15 +69,15 @@ mb_pos = {m: i for i, m in enumerate(np.sort(MBON))}
 ai = [mb_pos[int(a)] for a in np.sort(g["approach"])]
 vi = [mb_pos[int(a)] for a in np.sort(g["avoid"])]
 
-# --- parametry Shiu/Brian (protokol, nie strojenie) ---
+# --- Shiu/Brian params (protocol, not tuning) ---
 V0, VRST, VTH = -52.0, -52.0, -45.0   # mV
 T_MBR, TAU_SYN = 20.0, 5.0            # ms
-DT, T = 1.0, 1000                     # ms, krokow
+DT, T = 1.0, 1000                     # ms, steps
 REFR_STEPS, DELAY_STEPS = 2, 2        # 2.2ms / 1.8ms
 W_SYN = 0.275                         # mV na jednostke wagi
 F_POI = 250.0
 WDRV = W_SYN * F_POI                  # 68.75 mV na spike drive'u (jak w Brianie)
-APL_VTH_FACTOR = 4.0                  # prog APL: V0+4*(VTH-V0) = -24mV (patrz pkt 6)
+APL_VTH_FACTOR = 4.0                  # APL threshold: V0+4*(VTH-V0) = -24mV (see point 6)
 DEC_G = float(np.exp(-DT / TAU_SYN))
 K_MBR = DT / T_MBR
 
@@ -89,14 +89,14 @@ def run_odor(odor="butanedione", R=150.0, seed=7):
     rate_of = {}
     for gg, rate in zip(AG, vpat):
         if int(gg) in _glob2loc and rate >= 1.0:
-            rate_of[_glob2loc[int(gg)]] = rate * DT / 1000.0  # p(spike)/krok
-    print(f"{odor}: ALPN napedzane={len(rate_of)}/685", flush=True)
+            rate_of[_glob2loc[int(gg)]] = rate * DT / 1000.0  # p(spike)/step
+    print(f"{odor}: ALPN driven={len(rate_of)}/685", flush=True)
     drive_idx = np.array(sorted(rate_of), dtype=np.int32)
     drive_p = np.array([rate_of[i] for i in drive_idx], dtype=np.float64)
     rng = np.random.default_rng(seed)
     v = np.full(nN, V0, np.float64)
     vth = np.full(nN, VTH, np.float64)
-    vth[N:] = V0 + APL_VTH_FACTOR * (VTH - V0)  # APL: wysoki prog (duzy neuron)
+    vth[N:] = V0 + APL_VTH_FACTOR * (VTH - V0)  # APL: high threshold (large neuron)
     gg = np.zeros(nN, np.float64)
     refr = np.zeros(nN, np.int16)
     n = np.zeros(nN, np.int32)

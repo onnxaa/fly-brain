@@ -1,10 +1,10 @@
-"""Wycina prawdziwy obwód mushroom body z FlyWire v783.
-Wejścia (bez tokena, wszystko publiczne):
+"""Cuts the real mushroom-body circuit out of FlyWire v783.
+Inputs (no token, all public):
   Connectivity_783.parquet  (philshiu/Drosophila_brain_model)
   Completeness_783.csv      (FlyWireID -> index 0..N-1)
   supp1.tsv                 (flyconnectome/flywire_annotations, v783)
-Wyjście: mb_circuit.pt z edge_index/weight w lokalnych indeksach 0..M-1
-  + role: inputs (ALPN), KC, MBON (readout), DAN (reward).
+Output: mb_circuit.pt with edge_index/weight in local indices 0..M-1
+  + roles: inputs (ALPN), KC, MBON (readout), DAN (reward).
 """
 import json
 import pandas as pd
@@ -16,7 +16,7 @@ print("edges:", len(con), con.columns.tolist())
 
 print("loading completeness...")
 comp = pd.read_csv("Completeness_783.csv")
-# plik ma nagłówek ",Completed" -> pierwsza kolumna to FlyWire ID
+# file header is ",Completed" -> first column is the FlyWire ID
 id_col = comp.columns[0]
 comp = comp.rename(columns={id_col: "flywire_id"})
 comp["flywire_id"] = comp["flywire_id"].astype("int64")

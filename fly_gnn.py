@@ -1,6 +1,6 @@
-"""Fly brain -> GNN (bez PyG, sam torch sparse).
-Działa na CPU. Pełne 138k/15M też wejdzie w CSR (~120MB), ale trenuj na subcircuit.
-Format wejściowy jak Connectivity_783.parquet:
+"""Fly brain -> GNN (no PyG, torch sparse only).
+Runs on CPU. Full 138k/15M fits in CSR (~120MB), but train on a subcircuit.
+Input format like Connectivity_783.parquet:
   Presynaptic_Index, Postsynaptic_Index, Excitatory x Connectivity
 """
 import torch
@@ -13,11 +13,11 @@ class FlyGNNLayer(nn.Module):
         super().__init__()
         self.n_in = n_in
         self.aggr = aggr
-        # topologia zamrożona jako buffer
+        # frozen topology as buffer
         self.register_buffer("edge_index", edge_index.clone())  # [2, E] pre->post
         self.register_buffer("edge_sign", edge_sign.clone().float())  # +/-1
         self.register_buffer("edge_mag", edge_weight.clone().float().abs())
-        # trenowalne tylko magnitudy (Dale: znak stały)
+        # only magnitudes trainable (Dale: sign fixed)
         self.log_mag = nn.Parameter(torch.log(edge_weight.float().abs() + 1e-6))
         self.lin_self = nn.Linear(n_in, hidden_dim)
         self.lin_msg = nn.Linear(n_in, hidden_dim)
@@ -26,7 +26,7 @@ class FlyGNNLayer(nn.Module):
     def forward(self, x):
         # x: [N, n_in]
         pre, post = self.edge_index[0], self.edge_index[1]
-        mag = torch.exp(self.log_mag) * self.edge_sign  # zachowuje znak
+        mag = torch.exp(self.log_mag) * self.edge_sign  # preserves sign
         # message: x_pre * w
         msg_src = self.lin_msg(x[pre]) * mag.unsqueeze(1)
         agg = torch.zeros(x.size(0), msg_src.size(1), device=x.device)
@@ -45,7 +45,7 @@ class FlyBrainGNN(nn.Module):
         self.sign = torch.sign(edge_weight.float())
         self.sign[self.sign == 0] = 1.0
         self.node_emb = nn.Embedding(num_nodes, in_dim)
-        # typ neuronu jako prosty one-hot projekcja (sensory/motor/inter)
+        # neuron type as simple one-hot projection (sensory/motor/inter)
         self.layers = nn.ModuleList([
             FlyGNNLayer(
                 in_dim if s == 0 else hidden_dim,
@@ -57,7 +57,7 @@ class FlyBrainGNN(nn.Module):
         self.motor_head = nn.Linear(hidden_dim, 1)
 
     def forward(self, sensory_dict, sensory_idx, motor_idx):
-        # sensory_dict: {name: float 0..1} -> wstrzykujemy jako bias do emb
+        # sensory_dict: {name: float 0..1} -> inject as bias into emb
         x = self.node_emb.weight.clone()
         for name, val in sensory_dict.items():
             idx = sensory_idx.get(name, [])
@@ -79,7 +79,7 @@ class FlyBrainGNN(nn.Module):
                 "neg": float((mag < 0).sum()),
             }
 
-    # ---- online R-Hebb (bez backpropa, w locie) ----
+    # ---- online R-Hebb (no backprop, on the fly) ----
     def init_online(self, eta=0.01, alpha=1e-4, decay=0.9,
                     w_min=0.05, w_max=5.0):
         layer = self.layers[0]
@@ -94,7 +94,7 @@ class FlyBrainGNN(nn.Module):
             post = layer.edge_index[1]
             ref = torch.zeros(self.num_nodes)
             ref.index_add_(0, post, mag)
-            self._ol["ref_in"] = ref  # referencyjna suma |w| per neuron
+            self._ol["ref_in"] = ref  # reference |w| sum per neuron
 
     @torch.no_grad()
     def online_step(self, sensory_dict, sensory_idx, motor_idx, reward=0.0):
@@ -103,7 +103,7 @@ class FlyBrainGNN(nn.Module):
         if ol is None:
             return rates, h
         layer = self.layers[0]
-        # koincydencja na AKTYWACJACH WARSTWY 0 (nie ostatniej):
+        # coincidence on LAYER-0 activations (not the last one):
         x0 = self.node_emb.weight.clone()
         for name, val in sensory_dict.items():
             idx = sensory_idx.get(name, [])
@@ -122,7 +122,7 @@ class FlyBrainGNN(nn.Module):
                 float(torch.log(torch.tensor(ol["w_min"]))),
                 float(torch.log(torch.tensor(ol["w_max"]))),
             )
-            # renormalizacja energii per neuron: suma |w| wraca do ref
+            # energy renorm per neuron: |w| sum back to ref
             mag = torch.exp(layer.log_mag)
             cur = torch.zeros(self.num_nodes)
             cur.index_add_(0, post, mag)
@@ -134,7 +134,7 @@ class FlyBrainGNN(nn.Module):
 
 
 def load_flywire_parquet(path_con, max_nodes=None):
-    """Ładuje prawdziwy parquet do edge_index/weight. Wymaga pandas+pyarrow."""
+    """Loads the real parquet into edge_index/weight. Requires pandas+pyarrow."""
     import pandas as pd
     con = pd.read_parquet(path_con)
     pre = torch.tensor(con["Presynaptic_Index"].values, dtype=torch.long)
@@ -154,8 +154,8 @@ def synthetic_connectome(n=2000, avg_deg=12, seed=0):
     e = n * avg_deg
     pre = torch.randint(0, n, (e,), generator=g)
     post = torch.randint(0, n, (e,), generator=g)
-    # Balans per sieć: połowa +k, połowa -k o tej samej magnitudzie
-    # (w prawdziwym konektomie pilnuj tego per neuron docelowy, nie globalnie)
+    # Balance per net: half +k, half -k with the same magnitude
+    # (in the real connectome keep this per target neuron, not globally)
     mag = torch.randint(1, 6, (e,), generator=g).float()
     sign = torch.ones(e)
     sign[1::2] = -1.0  # parzyste -, nieparzyste +

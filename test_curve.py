@@ -1,4 +1,4 @@
-"""Krzywa uczenia: 3 triale full-plastic, d(t) + EI(t)."""
+"""Learning curve: 3 full-plastic trials, d(t) + EI(t)."""
 import numpy as np, pandas as pd, time
 t0 = time.time()
 roles = np.load("roles_full.npz")

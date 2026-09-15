@@ -1,4 +1,4 @@
-"""Lancuch FF: h1 = 1-hop(ORN bias) -> KC drive = A->K z h1[ALPN]. Overlap + corr na kazdym pietrze."""
+"""FF chain: h1 = 1-hop(ORN bias) -> KC drive = A->K from h1[ALPN]. Overlap + corr per layer."""
 import numpy as np, pandas as pd, time
 t0=time.time()
 roles = np.load("roles_full.npz"); N=int(roles["N"][0]); ORN=roles["ORN"]
@@ -18,7 +18,7 @@ emb = rng.normal(0,0.5,size=(N,in_dim)).astype(np.float32)
 Wmsg = rng.normal(0,0.3,size=(in_dim,hid)).astype(np.float32)
 Wself = rng.normal(0,0.3,size=(in_dim,hid)).astype(np.float32)
 Wmsg2 = rng.normal(0,0.3,size=(hid,hid)).astype(np.float32)
-# ZAPACHY GLOMERULARNE: cale typy ORN (jak prawdziwe odoranty), nie losowe polowki neuronow
+# GLOMERULAR ODORS: whole ORN types (like real odorants), not random neuron halves
 ao = pd.read_csv("supp1.tsv", sep="\t", usecols=["root_id","cell_class","cell_type"])
 ao = ao[ao["cell_class"]=="olfactory"]
 fly2idx2 = {int(f): i for i, f in enumerate(pd.read_csv("Completeness_783.csv").iloc[:,0].values.astype(np.int64))}
@@ -27,7 +27,7 @@ have = set(fly2idx2.keys())
 oA = np.array(sorted({fly2idx2[int(r)] for _, r in ao[ao["cell_type"].isin(typy[:len(typy)//2])]["root_id"].items() if int(r) in have}), dtype=np.int32)
 oB = np.array(sorted({fly2idx2[int(r)] for _, r in ao[ao["cell_type"].isin(typy[len(typy)//2:])]["root_id"].items() if int(r) in have}), dtype=np.int32)
 oA = oA[np.isin(oA, ORN)]; oB = oB[np.isin(oB, ORN)]
-print(f"glomeruli A={len(typy[:len(typy)//2])} typow/{len(oA)} ORN  B={len(typy[len(typy)//2:])} typow/{len(oB)} ORN", flush=True)
+print(f"glomeruli A={len(typy[:len(typy)//2])} types/{len(oA)} ORN  B={len(typy[len(typy)//2:])} types/{len(oB)} ORN", flush=True)
 np.savez("odor_glom.npz", odorA=oA, odorB=oB)
 CH=2000000
 def h1_of(bias):

@@ -1,5 +1,5 @@
-"""Tropotaksja: porownaj MB_pref dla 'lewej' vs 'prawej' anteny (conc(x+d) vs conc(x-d)), idz w wyzszy.
-Miara: nachylenie pref vs conc przed/po treningu A+."""
+"""Tropotaxis: compare MB_pref for the 'left' vs 'right' antenna (conc(x+d) vs conc(x-d)), go higher.
+Metric: pref-vs-conc slope before/after A+ training."""
 import numpy as np
 from fly_api import FlyBrainAPI
 api = FlyBrainAPI(mode="mb", path=".")
@@ -9,7 +9,7 @@ def pref_at(conc):
     return api.step(odor=odor)["MB_pref"]
 cs = [0.0, 0.5, 1.0]
 p0 = [pref_at(c) for c in cs]
-print(f"przed: pref={['%+.0f'%v for v in p0]} nachylenie={p0[-1]-p0[0]:+.0f}", flush=True)
+print(f"before: pref={['%+.0f'%v for v in p0]} slope={p0[-1]-p0[0]:+.0f}", flush=True)
 def run():
     x = 0.2
     for t in range(14):
@@ -19,12 +19,12 @@ def run():
         x = float(np.clip(x + (0.05 if pL >= pR else -0.05), 0, 1))
     return x
 x0 = run()
-print(f"przed treningiem x={x0:.2f} (start 0.2, cel 0.8)", flush=True)
+print(f"before training x={x0:.2f} (start 0.2, goal 0.8)", flush=True)
 for _ in range(2):
     odor = np.concatenate([np.full(nA, 1.0), np.full(nB, 0.2)]).astype(np.float32)
     api.train(odor=odor, reward=1.0)
 p1 = [pref_at(c) for c in cs]
-print(f"po: pref={['%+.0f'%v for v in p1]} nachylenie={p1[-1]-p1[0]:+.0f}", flush=True)
+print(f"after: pref={['%+.0f'%v for v in p1]} slope={p1[-1]-p1[0]:+.0f}", flush=True)
 x1 = run()
-print(f"po treningu x={x1:.2f} (oczek. >{x0:.2f}, blizej 0.8)", flush=True)
+print(f"after training x={x1:.2f} (expect >{x0:.2f}, near 0.8)", flush=True)
 print("PASS-tropotaxis" if x1 > x0 else "FAIL-tropotaxis", flush=True)

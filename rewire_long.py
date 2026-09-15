@@ -1,7 +1,7 @@
-"""DLUGI rewire: odwrocenie walencji geosmin<->ethyl (awersyjny<->atrakcyjny).
-Funkcjonalny (magnitudy; topologia+Dale zamrozone - konstytucja projektu).
-Bloki A/B/C po 10 triali (geo+, ethyl-) + sleep(2); snapshoty wM_rewire_{A,B,C}.npz.
-Uzycie: python3 rewire_long.py [A|B|C|stab]  (B/C resumuja ze snapshotu)
+"""LONG rewire: geosmin<->ethyl valence flip (aversive<->attractive).
+Functional (magnitudes; topology+Dale frozen - project constitution).
+Blocks A/B/C of 10 trials (geo+, ethyl-) + sleep(2); snapshots wM_rewire_{A,B,C}.npz.
+Usage: python3 rewire_long.py [A|B|C|stab]  (B/C resume from snapshot)
 Log -> results/rewire_long.txt
 """
 import numpy as np, sys, time, os
@@ -42,12 +42,12 @@ if BLK in ("A", "B", "C"):
         if t % 5 == 0:
             stats(f"{BLK}t{t}")
     api.sleep(episodes=2)
-    stats(f"{BLK}+sen")
+    stats(f"{BLK}+sleep")
     p = api.save_weights(f"wM_rewire_{BLK}.npz")
     log(f"snapshot {p}")
 elif BLK == "stab":
     stats("pre-stab")
-    for t in range(1, 6):  # neutralne triale + sen: czy flip trzyma?
+    for t in range(1, 6):  # neutral trials + sleep: does the flip hold?
         api.train(odor="co2", reward=0.0, punish=0.0)
     api.sleep(episodes=2)
     stats("post-stab")

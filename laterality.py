@@ -1,7 +1,7 @@
-"""Lateralizacja wechowa (side z supp1.tsv). Dopisuje do rol.
-Wzorzec jak retmap.py: laduje roles_full.npz jako dict, dopisuje, zapisuje.
-ISTNIEJACE klucze (DESC_L/R, EFFERENT_L/R - z mediany soma_x) NIE ruszane (kompatybilnosc).
-Nowe: ORN_L/ORN_R (+ORN_U: 30 bez strony), ALPN_L/ALPN_R, MECH_L/MECH_R.
+"""Olfactory laterality (side from supp1.tsv). Appends to roles.
+Pattern like retmap.py: loads roles_full.npz as dict, appends, saves.
+EXISTING keys (DESC_L/R, EFFERENT_L/R - from soma_x median) NOT touched (compat).
+New: ORN_L/ORN_R (+ORN_U: 30 unassigned), ALPN_L/ALPN_R, MECH_L/MECH_R.
 """
 import pandas as pd, numpy as np
 comp = pd.read_csv("Completeness_783.csv")
@@ -27,6 +27,6 @@ for cls, key in [("olfactory", "ORN"), ("ALPN", "ALPN"), ("mechanosensory", "MEC
     roles[key + "_L"], roles[key + "_R"] = L, R
     if len(U):
         roles[key + "_U"] = U
-    print(f"{key}: L={len(L)} R={len(R)} U={len(U)} (suma={len(base)})", flush=True)
+    print(f"{key}: L={len(L)} R={len(R)} U={len(U)} (sum={len(base)})", flush=True)
 np.savez("roles_full.npz", **roles)
 print("PASS-laterality", flush=True)

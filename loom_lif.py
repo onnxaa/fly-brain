@@ -1,10 +1,10 @@
-"""Looming kolcowo BEZ full-Briana: numpy-LIF (jak test_lif v2) na CALYM mozgu.
-Uzycie: python3 loom_lif.py [warunek] [Tms]
-warunek: sugar | loom | conflict | all (domyslnie all)
-Dynamika 1:1 z test_lif v2 (Brian/Shiu: v0/rst -52, vth -45, t_mbr 20ms, tau 5ms,
-refr 2ms, delay 2ms, w_syn 0.275, g-reset, APL prog x4, wdrv 68.75).
-Drive: sugar-GRN @150Hz i/lub LC4+LPLC2 @150Hz (jak w papierze SNN).
-Wyniki dopisywane do results/loom_lif.txt + spike counts do loom_lif_<war>.npz.
+"""Spiking looming WITHOUT full-Brian: numpy-LIF (like test_lif v2) on the WHOLE brain.
+Usage: python3 loom_lif.py [condition] [Tms]
+condition: sugar | loom | conflict | all (default all)
+Dynamics 1:1 with test_lif v2 (Brian/Shiu: v0/rst -52, vth -45, t_mbr 20ms, tau 5ms,
+refr 2ms, delay 2ms, w_syn 0.275, g-reset, APL threshold x4, wdrv 68.75).
+Drive: sugar-GRN @150Hz and/or LC4+LPLC2 @150Hz (like the SNN paper).
+Results appended to results/loom_lif.txt + spike counts to loom_lif_<cond>.npz.
 """
 import numpy as np, pandas as pd, sys, time
 from collections import deque

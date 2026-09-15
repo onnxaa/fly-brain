@@ -1,4 +1,4 @@
-"""Role full-brain (light, bez ladowania connectivity)."""
+"""Full-brain roles (lightweight, no connectivity load)."""
 import numpy as np, pandas as pd
 comp = pd.read_csv("Completeness_783.csv")
 fly_ids = comp[comp.columns[0]].values.astype(np.int64)

@@ -1,9 +1,9 @@
-"""Sztuczny zegar molekularny TTFL (Goldbeter 1995, Drosophila PER-TIM).
-Uzasadnienie: TTFL to biochemia wewnatrzkomorkowa - z definicji nieobecna w konektomie
-(mapuje synapsy, nie bialka), jak fototransdukcja. Pudlo zastepuje brakujacy organ,
-nie liczy percepcji. Sygnal idzie na WLASCIWE neurony (s-LNv=poranne, LNd/DN1=wieczorne).
-Swiatlo (srodowisko) degraduje TIM przez Cry - entrainment jak w biologii.
-Jednostka czasu: 1 krok = 1h (doba=24 kroki); ck_dt do dokladnosci ODE.
+"""Artificial molecular-clock TTFL (Goldbeter 1995, Drosophila PER-TIM).
+Rationale: TTFL is intracellular biochemistry - absent from the connectome by definition
+(maps synapses, not proteins), like phototransduction. The box replaces a missing organ,
+it does not compute perception. Signal goes to the CORRECT neurons (s-LNv=morning, LNd/DN1=evening).
+Light (environment) degrades TIM via Cry - entrainment like in biology.
+Time unit: 1 step = 1h (day=24 steps); ck_dt for ODE accuracy.
 """
 import numpy as np
 
@@ -22,8 +22,8 @@ class TTFL:
         self._avg = None  # kroczaca srednia P2 (odniesienie fazy, tau~24h)
 
     def step(self, light, dt=0.05, vd_light=1.5):
-        """Jeden krok=1h. light 0..1 (srodowisko) -> degradacja TIM (Cry)."""
-        vd = self.vd * (1.0 + vd_light * light)  # Cry: swiatlo degraduje TIM
+        """One step=1h. light 0..1 (environment) -> TIM degradation (Cry)."""
+        vd = self.vd * (1.0 + vd_light * light)  # Cry: light degrades TIM
         for _ in range(int(1.0 / dt)):
             M, P0, P1, P2, PN = self.M, self.P0, self.P1, self.P2, self.PN
             dM = self.vs * self.KI ** self.n / (self.KI ** self.n + PN ** self.n) \
@@ -40,7 +40,7 @@ class TTFL:
                 if getattr(self, k) < 0:
                     setattr(self, k, 0.0)
         self.t += 1.0
-        # faza wzgledem kroczacej sredniej: TIM wysoki = noc biologiczna
+        # phase vs trailing mean: high TIM = biological night
         self._avg = self.P2 if self._avg is None else self._avg + (self.P2 - self._avg) / 24.0
         span = 0.8  # typowa amplituda P2 w DD (0.18-1.00)
         morning = float(np.clip(0.5 + (self._avg - self.P2) / span, 0.0, 1.0))
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     ac = np.correlate(pks - pks.mean(), pks - pks.mean(), "full")[len(pks):]
     ac[0] = 0
     per = int(np.argmax(ac[:72])) if ac[:72].max() > 0 else -1
-    print(f"DD okres={per}h (cel 24), P2 range={pks.min():.2f}-{pks.max():.2f}")
+    print(f"DD period={per}h (target 24), P2 range={pks.min():.2f}-{pks.max():.2f}")
     # entrainment LD 12:12
     ck2 = TTFL()
     ph = []
@@ -69,4 +69,4 @@ if __name__ == "__main__":
         s = ck2.step(1.0 if h % 24 < 12 else 0.0)
         ph.append(s["P2"])
     ph = np.array(ph)
-    print(f"LD: faza stabilna (ostatnie 2 doby corr)={np.corrcoef(ph[-48:-24], ph[-24:])[0,1]:.3f}")
+    print(f"LD: stable phase (last 2 days corr)={np.corrcoef(ph[-48:-24], ph[-24:])[0,1]:.3f}")

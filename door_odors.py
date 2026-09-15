@@ -1,4 +1,4 @@
-"""Kanoniczne zapachy DoOR 2.0 (Munch & Galizia 2016): glom -> ORN globals. Baseline 0.1, primary 1.0."""
+"""Canonical DoOR 2.0 odors (Munch & Galizia 2016): glom -> ORN globals. Baseline 0.1, primary 1.0."""
 import pandas as pd, numpy as np
 comp = pd.read_csv("Completeness_783.csv")
 fly_ids = comp[comp.columns[0]].values.astype(np.int64)
@@ -26,4 +26,4 @@ for name, prof in CANON.items():
     out[name+"_idx"] = np.array(idx, dtype=np.int32)
     out[name+"_val"] = np.array(val, dtype=np.float32)
 np.savez("door_odors.npz", **out)
-print(f"zapisano {len(CANON)} zapachow; ORN typow: {len(by_type)}", flush=True)
+print(f"wrote {len(CANON)} odors; ORN types: {len(by_type)}", flush=True)

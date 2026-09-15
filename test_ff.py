@@ -1,4 +1,4 @@
-"""KC drive tylko feedforward A->K (27k krawedzi) vs full recurrent. Overlap na pelnym mozgu."""
+"""KC drive feedforward-only A->K (27k edges) vs full recurrent. Overlap on the full brain."""
 import numpy as np, pandas as pd, time
 t0=time.time()
 roles = np.load("roles_full.npz"); N=int(roles["N"][0]); ORN=roles["ORN"]
@@ -19,7 +19,7 @@ emb = rng.normal(0,0.5,size=(N,in_dim)).astype(np.float32)
 Wmsg = rng.normal(0,0.3,size=(in_dim,hid)).astype(np.float32)
 Wself = rng.normal(0,0.3,size=(in_dim,hid)).astype(np.float32)
 oA = ORN[:len(ORN)//2]; oB=ORN[len(ORN)//2:]
-# 1-hop ORN->ALPN: aktywacja ALPN
+# 1-hop ORN->ALPN: ALPN activation
 xA=emb.copy(); xA[oA]+=2.0; xB=emb.copy(); xB[oB]+=2.0
 P=xA@Wmsg; aggA=np.zeros((N,hid),dtype=np.float32); np.add.at(aggA,post[ff],P[pre[ff]]*ws[ff][:,None])
 P=xB@Wmsg; aggB=np.zeros((N,hid),dtype=np.float32); np.add.at(aggB,post[ff],P[pre[ff]]*ws[ff][:,None])
@@ -28,5 +28,5 @@ sA=hA[KC_glob].mean(axis=1); sB=hB[KC_glob].mean(axis=1)
 k=max(1,int(len(sA)*0.05))
 mA=sA>=np.sort(sA)[-k]; mB=sB>=np.sort(sB)[-k]
 print(f"FF A->K: overlap={np.logical_and(mA,mB).sum()}/{k} corr={float(np.corrcoef(sA,sB)[0,1]):.2f}", flush=True)
-# porownanie: te same ALPN patterny?
+# comparison: same ALPN patterns?
 print("PASS-ff", flush=True)

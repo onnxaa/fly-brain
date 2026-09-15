@@ -1,6 +1,6 @@
-"""Bateria uczenia/pamieci A: akwizycja, reversal, dyskryminacja.
-Full pure, real DoOR. Uzycie: python3 learn_battery.py A|B
-Wyniki -> results/learn_battery.txt (dopisyane).
+"""Learning/memory battery: acquisition, reversal, discrimination.
+Full pure, real DoOR. Usage: python3 learn_battery.py A|B
+Results -> results/learn_battery.txt (appended).
 """
 import numpy as np, sys, time
 t0 = time.time()
@@ -28,14 +28,14 @@ def dAB(a, b):
 
 
 if PART == "A":
-    log("== E1 akwizycja ethyl+/geosmin- x6 ==")
+    log("== E1 acquisition ethyl+/geosmin- x6 ==")
     reset()
     for t in range(7):
         d, pa, pb = dAB("ethyl_hexanoate", "geosmin")
         log(f"E1 t{t}: d={d:+.2f} (ethyl={pa:+.2f} geo={pb:+.2f}) ({time.time()-t0:.0f}s)")
         if t < 6:
             api.train(odor="ethyl_hexanoate", reward=1.0); api.train(odor="geosmin", punish=1.0)
-    log("== E2 reversal: 3x ethyl+ potem 4x ethyl-/geosmin+ ==")
+    log("== E2 reversal: 3x ethyl+ then 4x ethyl-/geosmin+ ==")
     reset()
     for t in range(3):
         api.train(odor="ethyl_hexanoate", reward=1.0); api.train(odor="geosmin", punish=1.0)
@@ -44,14 +44,14 @@ if PART == "A":
         api.train(odor="ethyl_hexanoate", punish=1.0); api.train(odor="geosmin", reward=1.0)
         d, pa, pb = dAB("ethyl_hexanoate", "geosmin")
         log(f"E2 rev{t}: d={d:+.2f} (ethyl={pa:+.2f} geo={pb:+.2f}) ({time.time()-t0:.0f}s)")
-    log("== E3 dyskryminacja trudna hexanone3+/butanedione- (corr 0.39) x5 ==")
+    log("== E3 hard discrimination hexanone3+/butanedione- (corr 0.39) x5 ==")
     reset()
     for t in range(6):
         d, pa, pb = dAB("hexanone3", "butanedione")
         log(f"E3h t{t}: d={d:+.2f} ({time.time()-t0:.0f}s)")
         if t < 5:
             api.train(odor="hexanone3", reward=1.0); api.train(odor="butanedione", punish=1.0)
-    log("== E3 dyskryminacja latwa geosmin+/co2- x3 ==")
+    log("== E3 easy discrimination geosmin+/co2- x3 ==")
     reset()
     for t in range(4):
         d, pa, pb = dAB("geosmin", "co2")
@@ -60,7 +60,7 @@ if PART == "A":
             api.train(odor="geosmin", reward=1.0); api.train(odor="co2", punish=1.0)
 else:
     import itertools
-    log("== E4 ekstynkcja: 3x ethyl+ potem 4x ethyl solo ==")
+    log("== E4 extinction: 3x ethyl+ then 4x ethyl alone ==")
     reset()
     for t in range(3):
         api.train(odor="ethyl_hexanoate", reward=1.0)
@@ -69,7 +69,7 @@ else:
         api.train(odor="ethyl_hexanoate", reward=0.0, punish=0.0)
         d, pa, pb = dAB("ethyl_hexanoate", "geosmin")
         log(f"E4 ext{t}: d={d:+.2f} ({time.time()-t0:.0f}s)")
-    log("== E5 generalizacja: 3x ethyl+, sondy 6 zapachow vs geosmin ==")
+    log("== E5 generalization: 3x ethyl+, probe 6 odors vs geosmin ==")
     reset()
     for t in range(3):
         api.train(odor="ethyl_hexanoate", reward=1.0)
@@ -79,7 +79,7 @@ else:
     for o in ["geosmin", "hexanone3", "co2", "butanedione", "methyl_salicylate", "ethyl_hexanoate"]:
         d, pa, pb = dAB(o, "geosmin") if o != "geosmin" else (0.0, api.step(odor="geosmin")["MB_pref"], 0.0)
         log(f"E5 probe {o}: d_vs_geo={d:+.2f} corr(ethyl,{o})={ce[o]:+.2f}")
-    log("== E6 mieszaniny ethyl:geosmin (stosunki, bez treningu, swiezy mozdzek) ==")
+    log("== E6 ethyl:geosmin mixtures (ratios, untrained, fresh brain) ==")
     reset()
     dd = np.load("door_odors.npz")
     for re_ in [1.0, 0.5, 0.25, 0.0]:
@@ -92,7 +92,7 @@ else:
         pos = api._mb_pos
         ai = [pos[int(x)] for x in np.sort(api.approach)]; vi = [pos[int(x)] for x in np.sort(api.avoid)]
         log(f"E6 ethyl={re_:.2f}: MB_pref={float(r[ai].mean()-r[vi].mean()):+.2f}")
-    log("== E7 retencja: 3x ethyl+, 6 neutralnych triali ==")
+    log("== E7 retention: 3x ethyl+, 6 neutral trials ==")
     reset()
     for t in range(3):
         api.train(odor="ethyl_hexanoate", reward=1.0)
