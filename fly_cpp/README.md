@@ -56,10 +56,21 @@ Weights: C++ uses raw float32 `.wbin` (save/load_wbin), not Python `.npz`.
 ./build/fly --data <DATA> test-sleep  # SHY wash toward baseline
 ```
 
-## Parity (measured)
+## Parity (measured, 8 CPU, Sept 2026)
 
 - Rate path bit-parity mb+full: step/train/lif/tmaze/spaced identical to
-  Python to 4 decimals (tmaze 23s vs ~5min Python; full step ~0.7s vs ~20s).
+  Python to 4 decimals.
+- full load: 11.2s (Python, pandas+parquet) → ~3.0s (flat binaries) ≈ 3–4x.
+- full step in-process: Python 0.5s (numpy scatter is already near-optimal)
+  vs C++ ~0.7–1.0s — parity, no compute win claimed.
+- full one-shot (cold load + 1 step): ~12–15s → ~3.8s ≈ 3–4x.
+- mb one-shot: ~1.0s → 0.39s ≈ 2.6x; mb step in-process: parity (~0.02s).
+- tmaze end-to-end: 23s in-process (24 forwards, CSR rebuilds on train).
+- Memory full: Python 1505 MB → C++ ~525 MB ≈ 3x (no pandas/pyarrow,
+  no per-forward temporaries).
+- Real wins: load time, memory, one-shot latency, single static binary
+  with no data deps. Per-step FLOPs are at parity — headroom (mmap,
+  quantization, GPU) not yet exploited.
 - X-zone growth: same behavior class, different bits (PCG64 vs mt19937_64)
   and hardened fan for new sinks (sum|w|, Python crashes when scaling ran
   before growth — C++ stays correct).
