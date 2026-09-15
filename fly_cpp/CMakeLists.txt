@@ -6,6 +6,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -DNDEBUG")
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 find_package(OpenMP)
 include_directories(include)
 add_library(flycore

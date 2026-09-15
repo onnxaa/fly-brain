@@ -56,21 +56,31 @@ Weights: C++ uses raw float32 `.wbin` (save/load_wbin), not Python `.npz`.
 ./build/fly --data <DATA> test-sleep  # SHY wash toward baseline
 ```
 
-## Parity (measured, 8 CPU, Sept 2026)
+## Perf (measured, 8 CPU, warm cache; Python = numpy rate path)
 
-- Rate path bit-parity mb+full: step/train/lif/tmaze/spaced identical to
-  Python to 4 decimals.
-- full load: 11.2s (Python, pandas+parquet) → ~3.0s (flat binaries) ≈ 3–4x.
-- full step in-process: Python 0.5s (numpy scatter is already near-optimal)
-  vs C++ ~0.7–1.0s — parity, no compute win claimed.
-- full one-shot (cold load + 1 step): ~12–15s → ~3.8s ≈ 3–4x.
-- mb one-shot: ~1.0s → 0.39s ≈ 2.6x; mb step in-process: parity (~0.02s).
-- tmaze end-to-end: 23s in-process (24 forwards, CSR rebuilds on train).
-- Memory full: Python 1505 MB → C++ ~525 MB ≈ 3x (no pandas/pyarrow,
-  no per-forward temporaries).
-- Real wins: load time, memory, one-shot latency, single static binary
-  with no data deps. Per-step FLOPs are at parity — headroom (mmap,
-  quantization, GPU) not yet exploited.
+| op (full brain) | Python | C++ | gain |
+|---|---|---|---|
+| load | 11.2s | ~0.7s | **16x** |
+| step | 0.50s | ~0.11s | **4–5x** |
+| train (punish) | 1.27s | 0.16s | **8x** |
+| sleep(5) | 1.40s | 0.20s | **7x** |
+| tmaze end-to-end | — | 5.5s (was 23s) | — |
+| spaced end-to-end | — | 62s (was >120s) | — |
+| RAM | 1505 MB | ~537 MB | **~3x** |
+
+What did it (all parity-safe, no `-ffast-math`, no FP reassociation):
+- Flat binaries + CSR-direct layout: edges stably sorted by `post` once in
+  `export_flat.py` (counting sort, O(E)). Stable = within-post order kept,
+  so per-post FP summation sequences are bit-identical to Python.
+  Edge index IS the CSR slot: no scatter, no permutation map, sequential
+  passes everywhere. Unsorted input still works via general fallback.
+- `train`/`sleep`/wash write through to CSR in place (`csr_update_edge`,
+  fused loops) instead of rebuilding + reallocating the whole 15M CSR.
+- `build_km` bitmap instead of 30M `binary_search`.
+- Persistent forward buffers (no 3×N alloc per step), activation enum
+  (no per-element `strcmp`), readout indices precomputed once.
+- LTO (`CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE`).
+- Headroom left: unify `pre`/`csr_pre` (−60 MB), mmap data, GPU — not done.
 - X-zone growth: same behavior class, different bits (PCG64 vs mt19937_64)
   and hardened fan for new sinks (sum|w|, Python crashes when scaling ran
   before growth — C++ stays correct).

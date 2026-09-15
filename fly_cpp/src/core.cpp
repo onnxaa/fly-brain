@@ -102,6 +102,7 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
     ref_mb.assign(MBON.size(), 0.0f);
     for (size_t i = 0; i < km_e.size(); i++) ref_mb[km_mi[i]] += wM[(size_t)km_e[i]];
     build_csr();
+    ensure_readout_cache();
     // door odors (full)
     try {
         const char* doors[6] = {"geosmin","co2","hexanone3","methyl_salicylate","butanedione","ethyl_hexanoate"};
@@ -131,42 +132,109 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
 }
 
 void FlyBrain::build_km() {
-    std::vector<int32_t> sKC = KC, sMB = MBON;
-    std::sort(sKC.begin(), sKC.end()); std::sort(sMB.begin(), sMB.end());
+    // O(E) bitmap version (was: 2x binary_search per edge).
+    // Same sets as Python: KC/MBON membership, KC rank in sorted-KC order,
+    // MB rank in sorted-MBON order, avoid flag by MBON id.
     std::vector<int32_t> KCsorted = KC, MBsorted = MBON;
     std::sort(KCsorted.begin(), KCsorted.end());
     std::sort(MBsorted.begin(), MBsorted.end());
-    std::map<int32_t,int> kpos, mpos;
-    for (size_t i = 0; i < KCsorted.size(); i++) kpos[KCsorted[i]] = (int)i;
-    for (size_t i = 0; i < MBsorted.size(); i++) mpos[MBsorted[i]] = (int)i;
+    std::vector<int> kpos(N, -1), mpos(N, -1);
+    for (size_t i = 0; i < KCsorted.size(); i++) kpos[(size_t)KCsorted[i]] = (int)i;
+    for (size_t i = 0; i < MBsorted.size(); i++) mpos[(size_t)MBsorted[i]] = (int)i;
+    std::vector<char> isK((size_t)N, 0), isM((size_t)N, 0), isAv((size_t)N, 0);
+    for (auto id : KC) if (id >= 0 && id < N) isK[(size_t)id] = 1;
+    for (auto id : MBON) if (id >= 0 && id < N) isM[(size_t)id] = 1;
+    for (auto id : avoid) if (id >= 0 && id < N) isAv[(size_t)id] = 1;
     km_ki.clear(); km_mi.clear(); km_is_avoid.clear(); km_e.clear();
     km_ki.reserve(256000); km_mi.reserve(256000); km_is_avoid.reserve(256000);
-    std::vector<int32_t> savoid = avoid; std::sort(savoid.begin(), savoid.end());
     for (int64_t e = 0; e < E; e++) {
         int32_t pp = pre[(size_t)e], qq = post[(size_t)e];
-        if (!std::binary_search(sKC.begin(), sKC.end(), pp)) continue;
-        if (!std::binary_search(sMB.begin(), sMB.end(), qq)) continue;
-        km_ki.push_back(kpos[pp]); km_mi.push_back(mpos[qq]);
+        if (pp < 0 || pp >= N || qq < 0 || qq >= N) continue;
+        if (!isK[(size_t)pp] || !isM[(size_t)qq]) continue;
+        km_ki.push_back(kpos[(size_t)pp]); km_mi.push_back(mpos[(size_t)qq]);
         km_e.push_back(e);
-        km_is_avoid.push_back(std::binary_search(savoid.begin(), savoid.end(), qq) ? 1 : 0);
+        km_is_avoid.push_back(isAv[(size_t)qq] ? 1 : 0);
     }
 }
 
+void FlyBrain::ensure_readout_cache() {
+    mb_sorted = MBON;
+    std::sort(mb_sorted.begin(), mb_sorted.end());
+    std::map<int32_t,int> mp;
+    for (size_t i = 0; i < mb_sorted.size(); i++) mp[mb_sorted[i]] = (int)i;
+    mb_index.assign(MBON.size(), 0);
+    for (size_t i = 0; i < MBON.size(); i++) {
+        auto it = mp.find(MBON[i]);
+        mb_index[i] = (it == mp.end()) ? 0 : it->second;
+    }
+    ai_pos.clear(); vi_pos.clear();
+    for (auto id : approach) { auto it = mp.find(id); if (it != mp.end()) ai_pos.push_back(it->second); }
+    for (auto id : avoid) { auto it = mp.find(id); if (it != mp.end()) vi_pos.push_back(it->second); }
+    eff_sorted = EFFERENT;
+    std::sort(eff_sorted.begin(), eff_sorted.end());
+}
+
 void FlyBrain::build_csr() {
+    // Fast path: edges stably sorted by post (export_flat.py) => edge index
+    // IS the CSR slot. O(E) scan to verify + sequential fills, no scatter,
+    // no permutation map. Within-post order == raw parquet order (stable),
+    // so per-post FP summation sequences are unchanged (parity-safe).
+    bool sorted = true;
+    for (int64_t e = 1; e < E; e++) {
+        if (post[(size_t)e] < post[(size_t)e - 1]) { sorted = false; break; }
+    }
     head.assign((size_t)N + 1, 0);
     for (int64_t e = 0; e < E; e++) head[(size_t)post[(size_t)e] + 1]++;
     for (int i = 0; i < N; i++) head[(size_t)i + 1] += head[(size_t)i];
-    csr_pre.assign((size_t)E, 0); csr_sw.assign((size_t)E, 0);
-    std::vector<int64_t> cur = head;
-    for (int64_t e = 0; e < E; e++) {
-        int64_t s = cur[(size_t)post[(size_t)e]]++;
-        csr_pre[(size_t)s] = pre[(size_t)e];
-        csr_sw[(size_t)s] = wM[(size_t)e] * sign[(size_t)e];
+    csr_sw.assign((size_t)E, 0);
+    if (sorted) {
+        csr_direct = true;
+        edge2csr.clear();
+        csr_pre = pre; // identical order: copy (sequential 60MB)
+        const float* w = wM.data(); const float* sg = sign.data();
+        float* sw = csr_sw.data();
+        int64_t n = E;
+        #pragma omp parallel for schedule(static) if(n>1000000)
+        for (int64_t e = 0; e < n; e++) sw[(size_t)e] = w[(size_t)e] * sg[(size_t)e];
+    } else {
+        csr_direct = false;
+        csr_pre.assign((size_t)E, 0);
+        edge2csr.assign((size_t)E, 0);
+        std::vector<int64_t> cur = head;
+        for (int64_t e = 0; e < E; e++) {
+            int64_t s = cur[(size_t)post[(size_t)e]]++;
+            csr_pre[(size_t)s] = pre[(size_t)e];
+            csr_sw[(size_t)s] = wM[(size_t)e] * sign[(size_t)e];
+            edge2csr[(size_t)e] = (int32_t)s;
+        }
     }
     csr_built = true;
 }
 
-void FlyBrain::refresh_weights() { build_csr(); }
+void FlyBrain::refresh_weights() {
+    // Allocation-free weight refresh (topology unchanged): same values as
+    // build_csr would produce. Direct layout: single sequential pass.
+    if (csr_direct) {
+        if (csr_sw.size() != (size_t)E) { build_csr(); return; }
+        const float* w = wM.data(); const float* sg = sign.data();
+        float* sw = csr_sw.data();
+        int64_t n = E;
+        #pragma omp parallel for schedule(static) if(n>1000000)
+        for (int64_t e = 0; e < n; e++) sw[(size_t)e] = w[(size_t)e] * sg[(size_t)e];
+        return;
+    }
+    if (edge2csr.size() != (size_t)E || csr_sw.size() != (size_t)E) { build_csr(); return; }
+    const float* w = wM.data(); const float* sg = sign.data();
+    float* sw = csr_sw.data(); const int32_t* m = edge2csr.data();
+    int64_t n = E;
+    #pragma omp parallel for schedule(static) if(n>1000000)
+    for (int64_t e = 0; e < n; e++) sw[(size_t)m[(size_t)e]] = w[(size_t)e] * sg[(size_t)e];
+}
+
+void FlyBrain::csr_update_edge(int64_t e) {
+    size_t s = csr_direct ? (size_t)e : (size_t)edge2csr[(size_t)e];
+    csr_sw[s] = wM[(size_t)e] * sign[(size_t)e];
+}
 
 void FlyBrain::set_hops(int h) {
     if (h < 1 || h > 6) throw std::runtime_error("hops must be 1..6");
@@ -179,6 +247,7 @@ void FlyBrain::set_activation(const std::string& name, float sat, int Tms, int s
     if (name != "relu" && name != "lif" && name != "spike")
         throw std::runtime_error("activation must be 'relu', 'lif' or 'spike'");
     act = name;
+    act_id = (name == "lif") ? 1 : 0;
     if (name == "lif" && sat > 0) lif_sat = sat;
     if (name == "spike") {
         if (Tms >= 10 && Tms <= 5000) spike_T = Tms;
@@ -245,9 +314,14 @@ std::pair<bool, std::map<std::string, float>> FlyBrain::sleep_tick(float kc_frac
             asleep = true;
     }
     if (asleep && sl_dose > 0) {
-        for (size_t i = 0; i < wM.size(); i++)
-            wM[i] = wM[i] - sl_dose * (wM[i] - wM0[i]);
-        build_csr();
+        int64_t n = (int64_t)wM.size();
+        #pragma omp parallel for schedule(static) if(n>1000000)
+        for (int64_t i = 0; i < n; i++) {
+            size_t ee = (size_t)i;
+            float nw = wM[ee] - sl_dose * (wM[ee] - wM0[ee]);
+            wM[ee] = nw;
+            csr_update_edge(i);
+        }
     }
     info["sleep_S"] = sleep_S; info["asleep"] = asleep ? 1.0f : 0.0f;
     info["night"] = night ? 1.0f : 0.0f;
@@ -394,37 +468,59 @@ std::vector<float> FlyBrain::forward_pure(const std::vector<int32_t>& idx,
                                           const std::vector<float>& val,
                                           int hh, float thr) {
     if ((int)fan.size() < N) fan.resize((size_t)N, 1.0f);
-    std::vector<float> base((size_t)N, 0.0f), a((size_t)N, 0.0f);
+    if ((int)f_base.size() < N) {
+        f_base.assign((size_t)N, 0.0f);
+        f_a.assign((size_t)N, 0.0f);
+        f_agg.assign((size_t)N, 0.0f);
+    }
+    std::fill(f_base.begin(), f_base.begin() + N, 0.0f);
     for (size_t i = 0; i < idx.size(); i++) {
         int32_t id = idx[i];
-        if (id >= 0 && id < N) base[(size_t)id] += val[i];
+        if (id >= 0 && id < N) f_base[(size_t)id] += val[i];
     }
-    a = base;
-    std::vector<float> agg((size_t)N);
-    for (int h = 0; h < hh; h++) {
-        std::fill(agg.begin(), agg.end(), 0.0f);
-        #pragma omp parallel for schedule(static) if(N>10000)
-        for (int q = 0; q < N; q++) {
-            float s = 0;
-            for (int64_t e = head[(size_t)q]; e < head[(size_t)q+1]; e++)
-                s += a[(size_t)csr_pre[(size_t)e]] * csr_sw[(size_t)e];
-            agg[(size_t)q] = s;
+    f_a = f_base; // copy (size N, buffers exact)
+    const float* __restrict__ sw = csr_sw.data();
+    const int32_t* __restrict__ cp = csr_pre.data();
+    const int64_t* __restrict__ hd = head.data();
+    const float* __restrict__ fn = fan.data();
+    const float* __restrict__ bs = f_base.data();
+    float* __restrict__ av = f_a.data();
+    float* __restrict__ ag = f_agg.data();
+    int n = N;
+    bool big = (n > 10000);
+    if (act_id == 1) {
+        float sat = lif_sat;
+        for (int h = 0; h < hh; h++) {
+            #pragma omp parallel for schedule(static) if(big)
+            for (int q = 0; q < n; q++) {
+                float s = 0;
+                for (int64_t e = hd[q]; e < hd[q + 1]; e++)
+                    s += av[(size_t)cp[(size_t)e]] * sw[(size_t)e];
+                ag[q] = s;
+            }
+            #pragma omp parallel for schedule(static) if(big)
+            for (int q = 0; q < n; q++) {
+                float v = ag[q] / (fn[q] + 1e-6f) - thr;
+                av[q] = (v > 0 ? sat * (1.0f - std::exp(-v / sat)) : 0.0f) + bs[q];
+            }
         }
-        for (int q = 0; q < N; q++) {
-            float f = (q < (int)fan.size() && fan[(size_t)q] != 0) ? fan[(size_t)q] : 1.0f;
-            float v = agg[(size_t)q] / (f + 1e-6f);
-            a[(size_t)q] = activate(v - thr) + base[(size_t)q];
+    } else {
+        for (int h = 0; h < hh; h++) {
+            #pragma omp parallel for schedule(static) if(big)
+            for (int q = 0; q < n; q++) {
+                float s = 0;
+                for (int64_t e = hd[q]; e < hd[q + 1]; e++)
+                    s += av[(size_t)cp[(size_t)e]] * sw[(size_t)e];
+                ag[q] = s;
+            }
+            #pragma omp parallel for schedule(static) if(big)
+            for (int q = 0; q < n; q++) {
+                float v = ag[q] / (fn[q] + 1e-6f) - thr;
+                av[q] = (v > 0 ? v : 0.0f) + bs[q];
+            }
         }
     }
-    return a;
-}
-
-static std::map<int32_t,int> sorted_pos(const std::vector<int32_t>& ids) {
-    std::vector<int32_t> s = ids;
-    std::sort(s.begin(), s.end());
-    std::map<int32_t,int> m;
-    for (size_t i = 0; i < s.size(); i++) m[s[i]] = (int)i;
-    return m;
+    return f_a;
 }
 
 Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
@@ -472,58 +568,31 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
         for (size_t i = 0; i < nKC; i++) if (kcs[i] >= kt) { m[i]=1; kc_active++; ks[i]=kcs[i]; }
     }
     std::vector<float> r(MBON.size(), 0.0f);
+    // rs accumulates in mb_sorted order (km_mi convention); r follows
+    // MBON vector order via mb_index (precomputed in load).
+    std::vector<float> rsorted(mb_sorted.size(), 0.0f);
     if (spk) {
-        for (size_t i = 0; i < MBON.size(); i++) {
-            // MBON order in file is sorted already for mb; for full KC/MBON sorted.
-            // r index = position in MBON vector order. km_mi uses sorted order,
-            // which matches file order when file is sorted. Map via sorted pos:
-            r[i] = 0; // filled below via km
-        }
-        // Build via km_mi (sorted order). Need MBON sorted mapping: assume MBON file sorted.
-        // To be safe, accumulate then reorder: accumulate into sorted-order array then map.
-        std::vector<int32_t> sMB = MBON; std::sort(sMB.begin(), sMB.end());
-        std::map<int32_t,int> mp; for (size_t i=0;i<sMB.size();i++) mp[sMB[i]]=(int)i;
-        std::vector<float> rs(sMB.size(), 0.0f);
-        // spike path: r = h[MBON] directly (measured Hz)
-        for (size_t i = 0; i < MBON.size(); i++) {
-            int pos = mp[MBON[i]];
-            rs[(size_t)pos] = h[(size_t)MBON[i]];
-        }
-        // reorder back to MBON vector order
-        for (size_t i = 0; i < MBON.size(); i++) r[i] = rs[(size_t)mp[MBON[i]]];
+        // spike path: measured Hz at MBON directly
+        for (size_t i = 0; i < MBON.size(); i++)
+            rsorted[(size_t)mb_index[i]] = h[(size_t)MBON[i]];
     } else {
-        // analytic K->M readout; km_mi indexes sorted MBON order.
-        std::vector<int32_t> sMB = MBON; std::sort(sMB.begin(), sMB.end());
-        std::map<int32_t,int> mp; for (size_t i=0;i<sMB.size();i++) mp[sMB[i]]=(int)i;
-        std::vector<double> rs(sMB.size(), 0.0);
+        // analytic K->M readout
+        std::vector<double> racc(mb_sorted.size(), 0.0);
         for (size_t j = 0; j < km_e.size(); j++) {
             int ki = km_ki[j], mi = km_mi[j];
             float kval = (ki>=0&&(size_t)ki<m.size()&&m[(size_t)ki]) ? ks[(size_t)ki] : 0.0f;
-            if (kval==0) {
-                // spike path already handled; for rate, ks already masked.
-                // But ks is zero for non-top, so skip.
-                // Note: ks[ki] corresponds to KC position ki (sorted KC order).
-                // m[ki] mask aligns.
-            }
-            rs[(size_t)mi] += (double)kval * wM[(size_t)km_e[j]];
+            racc[(size_t)mi] += (double)kval * wM[(size_t)km_e[j]];
         }
-        // map sorted-order rs back to MBON vector order
-        for (size_t i = 0; i < MBON.size(); i++) r[i] = (float)rs[(size_t)mp[MBON[i]]];
+        for (size_t i = 0; i < rsorted.size(); i++) rsorted[i] = (float)racc[i];
     }
-    auto mbpos = sorted_pos(MBON);
-    auto mean_sel = [&](const std::vector<int32_t>& sel)->float {
-        if (sel.empty()) return 0;
-        double ssum=0; int c=0;
-        // need r in sorted-order? Build sorted-order array for means:
-        std::vector<int32_t> sMB = MBON; std::sort(sMB.begin(), sMB.end());
-        std::map<int32_t,int> mp; for (size_t i=0;i<sMB.size();i++) mp[sMB[i]]=(int)i;
-        // reconstruct sorted r:
-        std::vector<float> rsorted(sMB.size(),0);
-        for (size_t i=0;i<MBON.size();i++) rsorted[(size_t)mp[MBON[i]]]=r[i];
-        for (auto id: sel){ auto it=mbpos.find(id); if(it==mbpos.end()) continue; ssum+=rsorted[(size_t)it->second]; c++; }
-        return c? (float)(ssum/c):0;
+    for (size_t i = 0; i < MBON.size(); i++) r[i] = rsorted[(size_t)mb_index[i]];
+    auto mean_sorted = [&](const std::vector<int>& poss)->float {
+        if (poss.empty()) return 0;
+        double ssum = 0;
+        for (int p : poss) ssum += rsorted[(size_t)p];
+        return (float)(ssum / poss.size());
     };
-    float app = mean_sel(approach), avo = mean_sel(avoid);
+    float app = mean_sorted(ai_pos), avo = mean_sorted(vi_pos);
     Out o;
     o.MB_app = app; o.MB_avo = avo; o.MB_pref = app - avo;
     o.MBON = r; o.KC_active = kc_active;
@@ -546,7 +615,7 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
         if(!MECH_L.empty()&&!MECH_R.empty()){o.MECH_L=mean_pool(MECH_L);o.MECH_R=mean_pool(MECH_R);}
         o.ORN_mean=mean_pool(ORN);
         if(!EFFERENT.empty()){
-            std::vector<int32_t> eff=EFFERENT; std::sort(eff.begin(),eff.end());
+            const std::vector<int32_t>& eff = eff_sorted;
             size_t he=eff.size()/2; double a=0,b=0;
             for(size_t i=0;i<he;i++) a+=h[(size_t)eff[i]];
             for(size_t i=he;i<eff.size();i++) b+=h[(size_t)eff[i]];
@@ -614,16 +683,20 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
     std::vector<char> m(nKC,0);
     for(size_t i=0;i<nKC;i++) if(kcs[i]>=kt) m[i]=1;
     if (mode=="full" && reward!=0) {
-        for (size_t e=0;e<(size_t)E;e++){
-            float a1=h[(size_t)pre[e]], a2=h[(size_t)post[e]];
-            elig[e]=elig[e]*0.9f + a1*a2;
-        }
-        for (size_t e=0;e<(size_t)E;e++){
-            float dw = 0.002f*reward*elig[e];
-            float lo=-0.02f*wM[e], hi=0.02f*wM[e];
+        // fused eligibility + weight update (was: two passes over E)
+        int64_t nE = E;
+        #pragma omp parallel for schedule(static) if(nE>1000000)
+        for (int64_t e = 0; e < nE; e++) {
+            size_t ee = (size_t)e;
+            float a1=h[(size_t)pre[ee]], a2=h[(size_t)post[ee]];
+            float el = elig[ee]*0.9f + a1*a2;
+            elig[ee] = el;
+            float dw = 0.002f*reward*el;
+            float lo=-0.02f*wM[ee], hi=0.02f*wM[ee];
             if(dw<lo)dw=lo; if(dw>hi)dw=hi;
-            float nw=wM[e]+dw-1e-6f; if(nw<0.05f)nw=0.05f; if(nw>650.0f)nw=650.0f;
-            wM[e]=nw;
+            float nw=wM[ee]+dw-1e-6f; if(nw<0.05f)nw=0.05f; if(nw>650.0f)nw=650.0f;
+            wM[ee]=nw;
+            csr_update_edge(ee);
         }
         if ((int)ref_in.size()<N) ref_in.assign((size_t)N,1.0f);
         std::vector<float> cur((size_t)N,0.0f);
@@ -633,7 +706,14 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
             float v=ref_in[(size_t)i]/cur[(size_t)i];
             if(v<0.95f)v=0.95f; if(v>1.05f)v=1.05f; sc[(size_t)i]=v;
         }
-        for(size_t e=0;e<(size_t)E;e++) wM[e]=wM[e]*sc[(size_t)post[e]];
+        int64_t nE2 = E;
+        #pragma omp parallel for schedule(static) if(nE2>1000000)
+        for (int64_t e = 0; e < nE2; e++) {
+            size_t ee = (size_t)e;
+            float nw = wM[ee]*sc[(size_t)post[ee]];
+            wM[ee]=nw;
+            csr_update_edge(ee);
+        }
     }
     // gated DAN weights per KM edge
     std::vector<float> fkc;
@@ -660,7 +740,9 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
             int ki=km_ki[j];
             if(ki<0||(size_t)ki>=m.size()||!m[(size_t)ki]) continue;
             int64_t e=km_e[j];
-            wM[(size_t)e]=wM[(size_t)e]*(use_fkc?fkc[j]:0.85f);
+            float nw=wM[(size_t)e]*(use_fkc?fkc[j]:0.85f);
+            wM[(size_t)e]=nw;
+            csr_update_edge(e);
         }
     }
     if (punish>0) {
@@ -669,10 +751,14 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
             int ki=km_ki[j];
             if(ki<0||(size_t)ki>=m.size()||!m[(size_t)ki]) continue;
             int64_t e=km_e[j];
-            wM[(size_t)e]=wM[(size_t)e]*(use_fkc?fkc[j]:0.85f);
+            float nw=wM[(size_t)e]*(use_fkc?fkc[j]:0.85f);
+            wM[(size_t)e]=nw;
+            csr_update_edge(e);
         }
     }
-    for(auto e: km_e) if(wM[(size_t)e]<0.05f) wM[(size_t)e]=0.05f;
+    for(auto e: km_e) {
+        if(wM[(size_t)e]<0.05f) { wM[(size_t)e]=0.05f; csr_update_edge(e); }
+    }
     {
         std::vector<float> cur(MBON.size(),0.0f);
         for(size_t j=0;j<km_e.size();j++) cur[(size_t)km_mi[j]]+=wM[(size_t)km_e[j]];
@@ -680,15 +766,27 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
         for(size_t i=0;i<cur.size();i++) if(cur[i]>1e-9f){
             float v=ref_mb[i]/cur[i]; if(v<0.9f)v=0.9f; if(v>1.1f)v=1.1f; sc[i]=v;
         }
-        for(size_t j=0;j<km_e.size();j++) wM[(size_t)km_e[j]]=(wM[(size_t)km_e[j]]*sc[(size_t)km_mi[j]]);
+        for(size_t j=0;j<km_e.size();j++) {
+            int64_t e=km_e[j];
+            wM[(size_t)e]=(wM[(size_t)e]*sc[(size_t)km_mi[j]]);
+            csr_update_edge(e);
+        }
     }
-    build_csr();
     return step(s, hh, thr);
 }
 
 void FlyBrain::sleep(int episodes, float rate) {
-    for(int k=0;k<episodes;k++)
-        for(size_t i=0;i<wM.size();i++) wM[i]=wM[i]-rate*(wM[i]-wM0[i]);
+    // fused wash + CSR write-through (was: wash passes + full CSR rebuild)
+    for(int k=0;k<episodes;k++) {
+        int64_t n = (int64_t)wM.size();
+        #pragma omp parallel for schedule(static) if(n>1000000)
+        for (int64_t i = 0; i < n; i++) {
+            size_t ee = (size_t)i;
+            float nw = wM[ee]-rate*(wM[ee]-wM0[ee]);
+            wM[ee]=nw;
+            csr_update_edge(ee);
+        }
+    }
     std::vector<float> cur(MBON.size(),0.0f);
     for(size_t j=0;j<km_e.size();j++) cur[(size_t)km_mi[j]]+=wM[(size_t)km_e[j]];
     ref_mb=cur;
@@ -697,7 +795,6 @@ void FlyBrain::sleep(int episodes, float rate) {
         std::fill(ref_in.begin(), ref_in.end(), 0.0f);
         for(size_t e=0;e<(size_t)E;e++) ref_in[(size_t)post[e]]+=wM[e];
     }
-    build_csr();
 }
 
 void FlyBrain::save_wbin(const std::string& path) {
@@ -717,7 +814,7 @@ void FlyBrain::load_wbin(const std::string& path) {
     std::vector<float> cur(MBON.size(),0.0f);
     for(size_t j=0;j<km_e.size();j++) cur[(size_t)km_mi[j]]+=wM[(size_t)km_e[j]];
     ref_mb=cur;
-    build_csr();
+    refresh_weights();
 }
 
 } // namespace fly

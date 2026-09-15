@@ -31,9 +31,16 @@ def w(name, arr):
 
 # ---- mb mode ----
 d = np.load(f"{SRC}/mb_circuit.npz")
-w("mb_pre", d["pre"].astype(np.int32))
-w("mb_post", d["post"].astype(np.int32))
-w("mb_w", d["weight"].astype(np.float32))  # signed; C++ splits sign/|w|
+# CSR-direct layout: stable sort by post once, here. Stable => within each
+# post group the raw edge order is preserved, so per-post partial sums in
+# C++ are bit-identical to Python's np.add.at in raw order (same FP seq).
+_mbo = np.argsort(d["post"], kind="stable")
+_mpre = np.asarray(d["pre"])[_mbo].astype(np.int32)
+_mpost = np.asarray(d["post"])[_mbo].astype(np.int32)
+_mw = np.asarray(d["weight"])[_mbo].astype(np.float32)
+w("mb_pre", _mpre)
+w("mb_post", _mpost)
+w("mb_w", _mw)  # signed; C++ splits sign/|w|
 for k in ("inputs_ALPN", "KC", "MBON", "DAN"):
     w(f"mb_{k}", d[k].astype(np.int32))
 g = np.load(f"{SRC}/mb_groups_v3.npz")
@@ -43,13 +50,13 @@ o = np.load(f"{SRC}/odor_glom.npz")
 w("mb_odorA", o["odorA"].astype(np.int32))
 w("mb_odorB", o["odorB"].astype(np.int32))
 # fan-in scaling (same formula as enable_scaling mb branch)
-fan = np.zeros(int(max(d["pre"].max(), d["post"].max()) + 1), np.float64)
-np.add.at(fan, d["post"], np.abs(d["weight"].astype(float)))
+fan = np.zeros(int(max(_mpre.max(), _mpost.max()) + 1), np.float64)
+np.add.at(fan, _mpost, np.abs(_mw.astype(float)))
 fan[fan == 0] = 1.0
 w("mb_fan", fan.astype(np.float32))
 # KC->MBON analytic readout maps (same construction as FlyBrainAPI mb)
-N = int(max(d["pre"].max(), d["post"].max()) + 1)
-pre, post = d["pre"], d["post"]
+N = int(max(_mpre.max(), _mpost.max()) + 1)
+pre, post = _mpre, _mpost
 KC = np.sort(d["KC"])
 MBON = np.sort(d["MBON"])
 kc_rank = {int(x): i for i, x in enumerate(KC)}
@@ -63,7 +70,7 @@ w("mb_km_mi", np.array([mb_rank[int(b)] for b in post[km_mask]], np.int32))
 avoid_set = set(int(x) for x in g["avoid"])
 w("mb_km_is_avoid",
   np.isin(post[km_mask], list(avoid_set)).astype(np.uint8))
-man["mb"] = {"N": N, "E": int(len(pre))}
+man["mb"] = {"N": N, "E": int(len(pre)), "sorted_by_post": True}
 del d, g, o, fan, km_mask
 
 # ---- full mode roles/groups (mapped, same code as FlyBrainAPI full) ----
@@ -113,25 +120,52 @@ t = np.load(f"{SRC}/taste_grns.npz")
 for k in ("sugar", "bitter", "ir94e", "water"):
     w(f"taste_{k}", t[k + "_idx"].astype(np.int32))
 
-# ---- full edges: stream parquet -> flat (low RAM) ----
+# ---- full edges: stream parquet -> flat, CSR-direct layout ----
+# Counting sort by post (stable: within-post order = raw parquet order, so
+# per-post partial sums in C++ are bit-identical to np.add.at in raw order).
+# Two streaming passes, O(E) time, O(N) RAM + page cache (no 120MB index).
 import pyarrow.parquet as pq
 pf = pq.ParquetFile(f"{SRC}/Connectivity_783.parquet")
 E = pf.metadata.num_rows
 man["full"]["E"] = int(E)
 print(f"full edges: E={E} N={Nf}", flush=True)
-fpre = open(f"{DST}/full_pre.i32", "wb")
-fpost = open(f"{DST}/full_post.i32", "wb")
-fw = open(f"{DST}/full_w.f32", "wb")
-for b in pf.iter_batches(batch_size=2000000,
-                         columns=["Presynaptic_Index", "Postsynaptic_Index",
-                                  "Excitatory x Connectivity"]):
-    fpre.write(np.asarray(b["Presynaptic_Index"]).astype(np.int32).tobytes())
-    fpost.write(np.asarray(b["Postsynaptic_Index"]).astype(np.int32).tobytes())
-    fw.write(np.asarray(b["Excitatory x Connectivity"])
-             .astype(np.float32).tobytes())
-fpre.close()
-fpost.close()
-fw.close()
+_COLS = ["Presynaptic_Index", "Postsynaptic_Index",
+         "Excitatory x Connectivity"]
+print("pass 1/2: counting posts...", flush=True)
+cnt = np.zeros(Nf, dtype=np.int64)
+for b in pf.iter_batches(batch_size=2000000, columns=["Postsynaptic_Index"]):
+    np.add.at(cnt, np.asarray(b["Postsynaptic_Index"]).astype(np.int64), 1)
+assert cnt.sum() == E, (cnt.sum(), E)
+off = np.zeros(Nf + 1, dtype=np.int64)
+np.cumsum(cnt, out=off[1:])
+del cnt
+pre_mm = np.memmap(f"{DST}/full_pre.i32", dtype=np.int32, mode="w+", shape=(E,))
+post_mm = np.memmap(f"{DST}/full_post.i32", dtype=np.int32, mode="w+", shape=(E,))
+w_mm = np.memmap(f"{DST}/full_w.f32", dtype=np.float32, mode="w+", shape=(E,))
+cur = off[:-1].copy()
+print("pass 2/2: scattering in post order...", flush=True)
+for b in pf.iter_batches(batch_size=2000000, columns=_COLS):
+    pr = np.asarray(b["Presynaptic_Index"]).astype(np.int64)
+    po = np.asarray(b["Postsynaptic_Index"]).astype(np.int64)
+    ww = np.asarray(b["Excitatory x Connectivity"]).astype(np.float32)
+    # running slots: stable intra-batch order + per-post rank (plain
+    # cur[po] would hand duplicates the same slot - read precedes inc).
+    s = np.argsort(po, kind="stable")
+    spo = po[s]
+    uq, cs = np.unique(spo, return_counts=True)  # sorted order
+    grp_start = np.repeat(np.cumsum(cs) - cs, cs)
+    slots_s = np.repeat(cur[uq], cs) + (np.arange(len(spo)) - grp_start)
+    slots = np.empty(len(po), dtype=np.int64)
+    slots[s] = slots_s
+    cur[uq] += cs
+    pre_mm[slots] = pr.astype(np.int32)
+    post_mm[slots] = po.astype(np.int32)
+    w_mm[slots] = ww
+    del pr, po, ww, slots, s, spo, uq, cs, grp_start, slots_s
+assert (cur == off[1:]).all()
+del cur, off, pre_mm, post_mm, w_mm
+man["sorted_by_post"] = True
+print("sorted layout OK", flush=True)
 for n in ("full_pre", "full_post", "full_w"):
     ext = "f32" if n.endswith("_w") else "i32"
     man[n] = {"file": f"{n}.{ext}", "n": int(E),

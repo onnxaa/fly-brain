@@ -2,6 +2,7 @@
 // See battery.hpp for the RNG note (PCG64 vs mt19937_64: same behavior class).
 #include "battery.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <random>
@@ -502,8 +503,7 @@ void test_std(const std::string& data) {
     std::printf("%s\n", (flat && drop > 30 && rec > seq[14]) ? "PASS-std" : "FAIL-std");
 }
 
-void test_sleep(const std::string& data) {
-    FlyBrain b("mb", data);
+void test_sleep(const std::string& data) {    FlyBrain b("mb", data);
     b.enable_scaling();
     Stim sa = s_odor("A");
     float naive = b.step(sa).MB_pref;
@@ -514,6 +514,35 @@ void test_sleep(const std::string& data) {
     std::printf("naive=%+.2f trained=%+.2f sleep=%+.2f\n", naive, tr, sl);
     bool toward = (std::fabs(sl - naive) < std::fabs(tr - naive));
     std::printf("%s (SHY wash toward baseline)\n", toward ? "PASS-sleep" : "FAIL-sleep");
+}
+
+void bench(const std::string& data, const std::string& mode, int steps) {
+    using clk = std::chrono::steady_clock;
+    auto ms = [](clk::time_point a, clk::time_point b) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
+    };
+    auto t0 = clk::now();
+    FlyBrain b(mode, data);
+    auto t1 = clk::now();
+    b.enable_scaling();
+    auto t2 = clk::now();
+    Stim s;
+    if (mode == "full") { s.has_odor_str = true; s.odor_str = "geosmin"; }
+    else { s.has_odor_str = true; s.odor_str = "A"; }
+    // warmup (page in, thread pool spin-up)
+    b.step(s);
+    auto t3 = clk::now();
+    for (int i = 0; i < steps; i++) b.step(s);
+    auto t4 = clk::now();
+    for (int i = 0; i < 2; i++) b.train(s, 0.0f, 1.0f);
+    auto t5 = clk::now();
+    b.sleep(5, 0.02f);
+    auto t6 = clk::now();
+    std::printf("bench mode=%s N=%d E=%lld\n", mode.c_str(), b.N, (long long)b.E);
+    std::printf("  load=%lldms scaling=%lldms step1=%lldms step_avg=%lldms train_avg=%lldms sleep5=%lldms\n",
+                (long long)ms(t0, t1), (long long)ms(t1, t2), (long long)ms(t2, t3),
+                (long long)ms(t3, t4) / steps, (long long)ms(t4, t5) / 2,
+                (long long)ms(t5, t6));
 }
 
 }} // namespace fly::battery

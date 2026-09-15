@@ -15,7 +15,7 @@ static void usage() {
                 "  habituate [--w-in F] | detour [--w-in F] [--steps N]\n"
                 "  heatbox [--sched F] [--steps N] [--test N]\n"
                 "  heatbox_ctl [--sched F] [--steps N] [--test N] | spaced\n"
-                "  test-x | test-std | test-sleep\n");
+                "  test-x | test-std | test-sleep | bench [--steps N]\n");
 }
 
 int main(int argc, char** argv) {
@@ -78,6 +78,10 @@ int main(int argc, char** argv) {
     if (cmd == "test-x") { fly::battery::test_x(data); return 0; }
     if (cmd == "test-std") { fly::battery::test_std(data); return 0; }
     if (cmd == "test-sleep") { fly::battery::test_sleep(data); return 0; }
+    if (cmd == "bench") {
+        fly::battery::bench(data, mode, steps > 0 ? steps : 5);
+        return 0;
+    }
 
     fly::FlyBrain b(mode, data);
     b.enable_scaling();

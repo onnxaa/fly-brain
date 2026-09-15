@@ -63,7 +63,15 @@ public:
     std::vector<int64_t> head;
     std::vector<int32_t> csr_pre;
     std::vector<float> csr_sw;
+    // edge index -> CSR slot (rebuilt by build_csr; enables O(km) and
+    // allocation-free weight refreshes without recounting head).
+    // EMPTY = identity (CSR-direct layout: edges stably sorted by post,
+    // edge index IS the CSR slot; see export_flat.py sorted_by_post).
+    std::vector<int32_t> edge2csr;
+    bool csr_direct = false;
     bool csr_built = false;
+    // persistent forward buffers (avoid 3xN allocs per forward_pure call)
+    std::vector<float> f_base, f_a, f_agg;
     // roles
     std::vector<int32_t> ORN, MECH, VIS, ALPN, EFFERENT, DESC, MEv, LOv;
     std::vector<int32_t> ORN_L, ORN_R, ALPN_L, ALPN_R, MECH_L, MECH_R;
@@ -71,6 +79,14 @@ public:
     std::vector<float> R_cx, R_cy;
     std::vector<int32_t> KC, MBON, DAN, approach, avoid, dan_pam, dan_ppl;
     std::vector<int32_t> clock_M, clock_E;
+    // readout index caches (built once in load; MBON/groups are immutable):
+    // mb_sorted = sorted MBON ids; ai_pos/vi_pos = sorted-order positions of
+    // approach/avoid; eff_sorted = sorted EFFERENT ids (motor split)
+    std::vector<int32_t> mb_sorted;
+    std::vector<int> ai_pos, vi_pos;
+    std::vector<int32_t> eff_sorted;
+    std::vector<int> mb_index; // mb_index[i] = position of MBON[i] in mb_sorted
+    void ensure_readout_cache();
     // KC->MBON analytic readout maps
     std::vector<int64_t> km_e; // global edge index per KM entry
     std::vector<int32_t> km_ki, km_mi;
@@ -79,6 +95,7 @@ public:
     // protocol state
     int hops = 1;
     std::string act = "relu"; float lif_sat = 2.0f;
+    int act_id = 0; // 0=relu, 1=lif (mirrors act; avoids per-element strcmp)
     int spike_T = 200, spike_seed = 7; float spike_wdrv = 68.75f;
     float spike_ainc = 0.0f, spike_rmax = 150.0f, spike_adapt = 1.0f;
     int spike_burn = 0;
@@ -127,6 +144,7 @@ public:
     std::map<std::string, float> get_std() const;
     float EI_sum() const;
     void refresh_weights(); // update csr_sw + ref after wM change (no topology change)
+    void csr_update_edge(int64_t e); // write-through of one edge weight
     void enable_auto_sleep(float k_wake = 0.05f, float thr_hi = 1.0f,
                            float thr_lo = 0.3f, float night_lt = 0.25f,
                            float crit_mult = 2.0f, float gate = 0.2f,

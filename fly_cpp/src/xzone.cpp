@@ -167,30 +167,40 @@ std::map<std::string, float> FlyBrain::x_teach_output(
                 if (den > 1e-12) {
                     double st = eta * err * pn[i] / den;
                     int64_t e = xo.ei[i];
-                    wM[(size_t)e] = std::min(650.0f, std::max(0.05f, (float)(wM[(size_t)e] + st)));
+                    float nw = std::min(650.0f, std::max(0.05f, (float)(wM[(size_t)e] + st)));
+                    wM[(size_t)e] = nw;
+                    csr_update_edge(e);
                 }
             }
         } else if (high) {
             for (size_t i = 0; i < L; i++) {
                 int64_t e = xo.ei[i];
-                wM[(size_t)e] = std::min(650.0f, std::max(0.05f, wM[(size_t)e] * (1 + eta * pn[i])));
+                float nw = std::min(650.0f, std::max(0.05f, wM[(size_t)e] * (1 + eta * pn[i])));
+                wM[(size_t)e] = nw;
+                csr_update_edge(e);
             }
         } else {
             for (size_t i = 0; i < L; i++) {
                 int64_t e = xo.ei[i];
-                wM[(size_t)e] = std::min(650.0f, std::max(0.05f, wM[(size_t)e] * (1 - eta * pn[i])));
+                float nw = std::min(650.0f, std::max(0.05f, wM[(size_t)e] * (1 - eta * pn[i])));
+                wM[(size_t)e] = nw;
+                csr_update_edge(e);
             }
         }
         if (scope == "whole") {
             double mxd = mx > 1e-12 ? mx : 1.0;
             double ef = eta_full * err;
             if (ef != 0.0) {
-                for (int64_t e = 0; e < E; e++) {
-                    double c = (double)h[pre[(size_t)e]] * h[post[(size_t)e]] / (mxd * mxd);
+                int64_t nE = E;
+                #pragma omp parallel for schedule(static) if(nE>1000000)
+                for (int64_t e = 0; e < nE; e++) {
+                    size_t ee = (size_t)e;
+                    double c = (double)h[pre[ee]] * h[post[ee]] / (mxd * mxd);
                     double dw = std::min(0.02, std::max(-0.02, ef * c));
-                    wM[(size_t)e] = std::min(650.0f, std::max(0.05f, (float)(wM[(size_t)e] * (1 + dw))));
+                    float nw = std::min(650.0f, std::max(0.05f, (float)(wM[ee] * (1 + dw))));
+                    wM[ee] = nw;
+                    csr_update_edge(ee);
                 }
-                build_csr();
             }
         }
         Out o = step(stim, hh, thr);

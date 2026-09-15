@@ -58,4 +58,7 @@ void test_x(const std::string& data);
 void test_std(const std::string& data);
 void test_sleep(const std::string& data);
 
+// Microbenchmark: load + N in-process steps + train + sleep (ms per phase)
+void bench(const std::string& data, const std::string& mode, int steps = 5);
+
 }} // namespace fly::battery
