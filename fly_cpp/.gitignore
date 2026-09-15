@@ -1,0 +1,5 @@
+build/
+data/*.i32
+data/*.f32
+data/*.u8
+data/*.i64
