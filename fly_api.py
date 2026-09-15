@@ -557,6 +557,107 @@ class FlyBrainAPI:
             self.ref_in[:] = cur
         return {"episodes": episodes, "rate": rate}
 
+    # ================= STREFA EKSPERYMENTALNA (poza pure) =================
+    # Metody x_*: wzrost mozgu i zmiany topologii. WYMAGAJA jawnego wywolania,
+    # nigdy nie odpalaja sie same. Kazda zmiana trafia do ksiazki _x_log;
+    # x_report() mowi dokladnie jak daleko od v783. Dale nowych krawedzi: +1
+    # (cholinergiczne, jak KC) - zalozenie protokolu, odnotowane w ksiedze.
+    def _x_edges(self, pa, pb, pw, ps):
+        n0 = len(self.pre)
+        self.pre = np.concatenate([self.pre, np.asarray(pa, np.int32)])
+        self.post = np.concatenate([self.post, np.asarray(pb, np.int32)])
+        self.wM = np.concatenate([self.wM, np.asarray(pw, np.float32)])
+        self.sign = np.concatenate([self.sign, np.asarray(ps, np.float32)])
+        self.wM0 = np.concatenate([self.wM0, np.asarray(pw, np.float32)])
+        self.E = len(self.pre)
+        if self.mode == "full":
+            self.elig = np.concatenate([self.elig, np.zeros(len(self.pre) - n0, np.float32)])
+            if getattr(self, "_fan", None) is not None and len(self._fan) < self.N:
+                self._fan = np.concatenate([self._fan, np.ones(self.N - len(self._fan), np.float32)])
+            fan = np.zeros(self.N, dtype=np.float64)
+            np.add.at(fan, self.post[n0:], np.abs(pw).astype(float))
+            if getattr(self, "_fan", None) is not None:
+                self._fan = (self._fan.astype(np.float64) + fan).astype(np.float32)
+            if hasattr(self, "ref_in"):
+                if len(self.ref_in) < self.N:
+                    self.ref_in = np.concatenate([self.ref_in, np.zeros(self.N - len(self.ref_in))])
+                self.ref_in = self.ref_in + fan.astype(np.float32)
+        if len(self.emb) < self.N:
+            rng = np.random.default_rng(1234)
+            self.emb = np.concatenate([self.emb, rng.normal(0, 0.5, size=(self.N - len(self.emb), self.in_dim)).astype(np.float32)])
+        return n0
+
+    def _x_rebuild_km(self):
+        isK = np.zeros(self.N, bool); isK[self.KC] = True
+        isM = np.zeros(self.N, bool); isM[self.MBON] = True
+        self.km_mask = isK[self.pre] & isM[self.post]
+        kc_rank = {int(gg): i for i, gg in enumerate(self.KC)}
+        mb_rank = {int(gg): i for i, gg in enumerate(self.MBON)}
+        kp = self.pre[self.km_mask]; qp = self.post[self.km_mask]
+        self.km_ki = np.array([kc_rank[int(a)] for a in kp], dtype=np.int32)
+        self.km_mi = np.array([mb_rank[int(b)] for b in qp], dtype=np.int32)
+        avoid_set = set(int(x) for x in self.avoid)
+        self.km_is_avoid = np.isin(qp, list(avoid_set))
+        self.km_is_approach = ~self.km_is_avoid
+        cur = np.zeros(len(self.MBON)); np.add.at(cur, self.km_mi, self.wM[self.km_mask].astype(float))
+        self.ref_mb = cur
+
+    def x_grow_kc(self, n=100, seed=0, wscale=0.05, per_kc_in=6, per_kc_out=8):
+        """Dodaje n pseudo-KC (ids N..N+n-1): wejscia z losowych ALPN (rozklad wag A->K
+        z danych x wscale), wyjscia na losowe MBON (rozklad K->M x wscale), znak +1.
+        Male wagi urodzeniowe = brak katastrofy; train() je potem rusza (R-Hebb + DAN)."""
+        rng = np.random.default_rng(seed)
+        isA = np.isin(self.pre, self.ALPN) & np.isin(self.post, self.KC)
+        isKM = self.km_mask.copy()
+        dA, dM = self.wM[isA], self.wM[isKM]
+        new = np.arange(self.N, self.N + n, dtype=np.int32)
+        pa, pb, pw = [], [], []
+        for kk in new:
+            src = rng.choice(self.ALPN, size=min(per_kc_in, len(self.ALPN)), replace=False)
+            pa.extend(src); pb.extend([kk] * len(src))
+            pw.extend(rng.choice(dA, size=len(src)) * wscale)
+            dst = rng.choice(self.MBON, size=min(per_kc_out, len(self.MBON)), replace=False)
+            pa.extend([kk] * len(dst)); pb.extend(dst)
+            pw.extend(rng.choice(dM, size=len(dst)) * wscale)
+        self.N += n
+        self.KC = np.sort(np.concatenate([self.KC, new]))
+        n0 = self._x_edges(pa, pb, pw, np.ones(len(pw), np.float32))
+        self._x_rebuild_km()
+        self._x_log = getattr(self, "_x_log", [])
+        self._x_log.append({"op": "grow_kc", "n": int(n), "edges": len(pw), "wscale": wscale,
+                            "dale": "+1(cholinergiczne)", "i0": int(n0)})
+        return new
+
+    def x_add_edge(self, a, b, w, dale=+1.0):
+        """Pojedyncza krawedz (z ksiega)."""
+        n0 = self._x_edges([a], [b], [abs(w)], [dale])
+        self._x_rebuild_km()
+        self._x_log = getattr(self, "_x_log", [])
+        self._x_log.append({"op": "add_edge", "a": int(a), "b": int(b), "w": float(w),
+                            "dale": float(dale), "i0": int(n0)})
+        return n0
+
+    def x_cut_edge(self, i):
+        """Funkcjonalne ciecie (waga->0, wpis odwracalny; topologia w ksiedze)."""
+        i = int(i)
+        old = float(self.wM[i])
+        self.wM[i] = 0.0
+        self._x_log = getattr(self, "_x_log", [])
+        self._x_log.append({"op": "cut_edge", "i": i, "a": int(self.pre[i]), "b": int(self.post[i]),
+                            "w_old": old})
+        return old
+
+    def x_report(self):
+        """Ile dodano/wycieto + zalozenia. Zwraca dict, drukuje."""
+        lg = getattr(self, "_x_log", [])
+        added = sum(e.get("edges", 1) for e in lg if e["op"] in ("grow_kc", "add_edge"))
+        cut = sum(1 for e in lg if e["op"] == "cut_edge")
+        grown = sum(e.get("n", 0) for e in lg if e["op"] == "grow_kc")
+        rep = {"new_neurons": grown, "added_edges": added, "cut_edges": cut,
+               "N": self.N, "E": self.E, "ops": len(lg), "dale_new": "+1(cholinergiczne)"}
+        print(f"X-REPORT: +{grown} neuronow, +{added} krawedzi, ~{cut} ciec, N={self.N} E={self.E}", flush=True)
+        return rep
+
     def save_weights(self, path):
         np.savez_compressed(path, wM=self.wM)
         try:

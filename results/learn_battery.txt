@@ -86,3 +86,9 @@ ZEGAR TTFL (clock.py + enable_clock, 2026-09-15):
  (amp 0.5: M +0.32/-0.40, E lustro; amp 2.0: 4x). Domysl 0.5 (modulacyjny wobec drive 2.0).
  Bramka C: faza TTFL (P2 vs srednia kroczaca), nie swiatlo.
  DD: sen free-run okres ~24 kroki (20-27, 44-51, 68-71). LD 12:12: sen w ciemnej polowie, stabilnie 3 doby.
+
+STREFA X (x_grow_kc/add_edge/cut_edge, 2026-09-15):
+ jawny opt-in poza pure; ksiega _x_log + x_report; Dale nowych +1 (cholinergiczne, protokol).
+ +256 pseudo-KC (wagi z rozkladow A->K/K->M x0.05): dryf d 0.5% (<5%), KC 5% skaluje (271/5433),
+ nowe w top-k 4.8% (losowo 4.7% - partycypuja proporcjonalnie), d -5.67->+1.30 po 3x ethyl+.
+ ledger: +256 neuronow +3585 krawedzi ~1 ciecie. PASS-grow (20s).
