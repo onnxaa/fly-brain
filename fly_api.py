@@ -229,6 +229,11 @@ class FlyBrainAPI:
             self._spike_ainc = 0.0
         self._spike_burn = 0 if mode == "mb" else 50  # onset ms not counted
         self._spike_cache = {}
+        # real VNC (MANC v1.2.1, Takemura/Marin/Cheong eLife 2024): opt-in,
+        # full mode only. Frozen topology/Dale from MANC; brain->VNC bridge
+        # is X-zone protocol (ledgered). See enable_vnc().
+        self._vnc = None
+        self._vnc_bridge_w = 1.0
 
     def set_hops(self, hops):
         """Default diffusion depth for step/train/teach/probes (None arg = this).
@@ -243,6 +248,66 @@ class FlyBrainAPI:
     def get_hops(self):
         """Current default readout depth."""
         return int(getattr(self, "_hops", 2 if self.mode == "full" else 1))
+
+    def enable_vnc(self, bridge_w=1.0):
+        """Load the real VNC (MANC v1.2.1): 23,650 neurons / 5.3M edges.
+
+        Frozen topology + Dale signs from MANC (NT: ACh=+1, GABA/glutamate=-1
+        central, unknown=+1). Brain DESC drive the VNC descending neurons via
+        the type-matched bridge (196 shared DN types, 2033 pairs; coverage
+        500/1299 brain DESC, 499/1322 VNC DN) — the bridge is X-zone protocol,
+        ledgered, weight=bridge_w (default 1.0). step() then returns VNC_leg_L/R,
+        VNC_wing, VNC_neck, VNC_motor, VNC_desc_mean. Full mode only.
+        VNC weights are frozen (no train/sleep plasticity in v1)."""
+        if self.mode != "full":
+            raise ValueError("VNC needs mode='full' (DESC bridge lives in the full brain)")
+        import os as _os
+        if not _os.path.exists(f"{self.path}/vnc_circuit.npz"):
+            raise FileNotFoundError("vnc_circuit.npz missing; run build_vnc.py first")
+        d = np.load(f"{self.path}/vnc_circuit.npz")
+        b = np.load(f"{self.path}/vnc_bridge.npz")
+        vnc = dict(M=int(d["N"][0]), pre=d["pre"], post=d["post"],
+                   w=d["weight"].astype(np.float32), sign=d["sign"].astype(np.float32),
+                   fan=d["fan"].astype(np.float32), desc=d["desc"],
+                   motor_all=d["motor_all"], leg_L=d["leg_L"], leg_R=d["leg_R"],
+                   wing_L=d["wing_L"], wing_R=d["wing_R"], neck=d["neck"])
+        # bridge: per VNC-desc neuron, mean of same-type brain DESC activity
+        pairs_b = np.asarray(b["brain"], dtype=np.int32)
+        pairs_v = np.asarray(b["vnc"], dtype=np.int32)
+        per_v = {}
+        for bb, vv in zip(pairs_b.tolist(), pairs_v.tolist()):
+            per_v.setdefault(int(vv), []).append(int(bb))
+        vnc["bridge"] = {k: np.array(v, dtype=np.int32) for k, v in per_v.items()}
+        vnc["n_shared"] = int(b["n_shared"][0])
+        self._vnc = vnc
+        self._vnc_bridge_w = float(bridge_w)
+        self._x_log = getattr(self, "_x_log", [])
+        self._x_log.append({"op": "enable_vnc", "M": vnc["M"], "E_vnc": len(vnc["pre"]),
+                            "bridge_pairs": len(pairs_b), "shared_types": vnc["n_shared"],
+                            "bridge_w": float(bridge_w), "dale": "MANC-NT"})
+        return f"vnc M={vnc['M']} E={len(vnc['pre'])} bridge={len(pairs_b)}/types={vnc['n_shared']}"
+
+    def _forward_vnc(self, h_brain):
+        """DESC-driven VNC forward: 2-hop pure diffusion over real MANC graph."""
+        v = self._vnc
+        M = v["M"]
+        base = np.zeros(M, dtype=np.float32)
+        bw = float(self._vnc_bridge_w)
+        if bw != 0.0:
+            for vv, bb in v["bridge"].items():
+                m = float(h_brain[bb].mean()) if len(bb) else 0.0
+                if m > 0:
+                    base[int(vv)] = m * bw
+        a = base.copy()
+        sw = (v["w"] * v["sign"]).astype(np.float32)
+        fan = v["fan"]
+        for _ in range(2):
+            msg = a[v["pre"]] * sw
+            agg = np.zeros(M, dtype=np.float32)
+            np.add.at(agg, v["post"], msg)
+            agg /= (fan + 1e-6)
+            a = np.maximum(0, agg) + base
+        return a
 
     def set_activation(self, name, sat=None, Tms=None, seed=None, wdrv=None, ainc=None, rmax=None,
                        adapt=None, burn=None):
@@ -998,6 +1063,19 @@ class FlyBrainAPI:
             if len(self.DESC_L) and len(self.DESC_R):
                 out["DN_L"] = float(h[self.DESC_L].mean()); out["DN_R"] = float(h[self.DESC_R].mean())
                 out["turn"] = float(out["DN_L"]-out["DN_R"])  # >0 turn left (convention)
+            if getattr(self, "_vnc", None) is not None:
+                hv = self._forward_vnc(h)
+                vv = self._vnc
+                out["VNC_desc_mean"] = float(hv[vv["desc"]].mean()) if len(vv["desc"]) else 0.0
+                out["VNC_motor"] = float(hv[vv["motor_all"]].mean()) if len(vv["motor_all"]) else 0.0
+                out["VNC_leg_L"] = float(hv[vv["leg_L"]].mean()) if len(vv["leg_L"]) else 0.0
+                out["VNC_leg_R"] = float(hv[vv["leg_R"]].mean()) if len(vv["leg_R"]) else 0.0
+                out["VNC_leg_imb"] = float(out["VNC_leg_L"] - out["VNC_leg_R"])
+                wl = float(hv[vv["wing_L"]].mean()) if len(vv["wing_L"]) else 0.0
+                wr = float(hv[vv["wing_R"]].mean()) if len(vv["wing_R"]) else 0.0
+                out["VNC_wing_L"] = wl; out["VNC_wing_R"] = wr
+                out["VNC_wing"] = float((wl + wr) / 2.0)
+                out["VNC_neck"] = float(hv[vv["neck"]].mean()) if len(vv["neck"]) else 0.0
             if len(self.ME):
                 out["ME_mean"] = float(h[self.ME].mean())
             if "motion" in info:

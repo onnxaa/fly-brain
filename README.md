@@ -125,9 +125,26 @@ corr 0.60–0.94. Acquisition d −5.65→+7.89; reversal crosses zero in 1–2 
 tropotaxis 0.20→0.90 all PASS. Full numbers: `results/*.txt`,
 checkpoints: `weights_registry.json`.
 
+## VNC (real, MANC v1.2.1)
+
+Full mode + `fly.enable_vnc()` appends the real male nerve cord
+(Takemura/Marin/Cheong et al., eLife 2024): **23,650 neurons / 5,303,770
+edges / ~31M synapses**, frozen topology + Dale from MANC NT predictions
+(ACh=+1, GABA/glutamate=-1 central). Brain DESC drive 499/1322 VNC
+descending neurons via a type-matched bridge (196 shared DN types, 2033
+pairs — X-zone protocol, coverage 500/1299 brain DESC). New readouts:
+`VNC_leg_L/R`, `VNC_wing`, `VNC_neck`, `VNC_motor`, `VNC_desc_mean`.
+
+Measured (`test_vnc.py` PASS): mech→DESC 0.87→VNC_desc 0.035→leg 0.0014,
+mech_L lateralizes DN_L 0.064 > DN_R 0.028. Odor→DESC is ~0 in rate mode
+(olfactory→neck chain too deep for fan-scaled diffusion — same documented
+limit as DN-turn). Build: `build_vnc.py` (feeders git-ignored, re-download
+from the public bucket). VNC weights frozen (no train/sleep plasticity v1);
+C++ twin has no VNC yet.
+
 ## Limits
 
-No lens/ommatidial optics (point sample + Gaussian RF only); motion readout-only, not injected; no body/VNC (flight only via prosthesis); DN-turn at
+No lens/ommatidial optics (point sample + Gaussian RF only); motion readout-only, not injected; VNC real but brain↔VNC is cross-sex/cross-animal (FAFB female → MANC male, type-level bridge 38%) and odor→motor still needs the deep chain; DN-turn at
 noise floor (steer via `MB_pref`/`turn_olf`); full spiking is NumPy-only
 (~100 s/500 ms); rate mode loses deep chains; no forgetting without
 sleep; molecular clock/TTFL outside data; DNa02 steering needs LAL drive.

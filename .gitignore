@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# MANC feeders (re-download, see build_vnc.py)
+manc_meta.feather
+manc_simple.feather
