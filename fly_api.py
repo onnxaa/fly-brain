@@ -602,20 +602,23 @@ class FlyBrainAPI:
         cur = np.zeros(len(self.MBON)); np.add.at(cur, self.km_mi, self.wM[self.km_mask].astype(float))
         self.ref_mb = cur
 
-    def x_grow_kc(self, n=100, seed=0, wscale=0.05, per_kc_in=6, per_kc_out=8):
+    def x_grow_kc(self, n=100, seed=0, wscale=0.05, per_kc_in=6, per_kc_out=8, src_pool=None):
         """Dodaje n pseudo-KC (ids N..N+n-1): wejscia z losowych ALPN (rozklad wag A->K
         z danych x wscale), wyjscia na losowe MBON (rozklad K->M x wscale), znak +1.
-        Male wagi urodzeniowe = brak katastrofy; train() je potem rusza (R-Hebb + DAN)."""
+        src_pool: zawęzona pula presynaptyczna (np. ALPN aktywne dla celu) - neurogeneza
+        sterowana aktywnoscia; None = cale ALPN. Male wagi urodzeniowe = brak katastrofy;
+        train() je potem rusza (R-Hebb + DAN)."""
         rng = np.random.default_rng(seed)
         isA = np.isin(self.pre, self.ALPN) & np.isin(self.post, self.KC)
         isKM = self.km_mask.copy()
         dA, dM = self.wM[isA], self.wM[isKM]
+        src = self.ALPN if src_pool is None else np.asarray(src_pool, dtype=np.int32)
         new = np.arange(self.N, self.N + n, dtype=np.int32)
         pa, pb, pw = [], [], []
         for kk in new:
-            src = rng.choice(self.ALPN, size=min(per_kc_in, len(self.ALPN)), replace=False)
-            pa.extend(src); pb.extend([kk] * len(src))
-            pw.extend(rng.choice(dA, size=len(src)) * wscale)
+            srcs = rng.choice(src, size=min(per_kc_in, len(src)), replace=False)
+            pa.extend(srcs); pb.extend([kk] * len(srcs))
+            pw.extend(rng.choice(dA, size=len(srcs)) * wscale)
             dst = rng.choice(self.MBON, size=min(per_kc_out, len(self.MBON)), replace=False)
             pa.extend([kk] * len(dst)); pb.extend(dst)
             pw.extend(rng.choice(dM, size=len(dst)) * wscale)
@@ -646,6 +649,25 @@ class FlyBrainAPI:
         self._x_log.append({"op": "cut_edge", "i": i, "a": int(self.pre[i]), "b": int(self.post[i]),
                             "w_old": old})
         return old
+
+    def x_prune_kc(self, ids, odors=("ethyl_hexanoate", "geosmin")):
+        """Przycinanie rozwojowe: nowym KC nieobecnym w top-k zadnej sondy zeruje
+        wyjscia (K->M). Jeden wpis w ksiedze. Zwraca (przyciete, aktywne)."""
+        ids = np.asarray(ids, dtype=np.int32)
+        act = np.zeros(len(ids), bool)
+        for od in odors:
+            h = self._forward_pure(*self.encode(odor=od)[:2], hops=2, thr=0.0)
+            kcs = h[self.KC]; k = max(1, int(len(kcs) * 0.05))
+            top = set(np.argsort(kcs)[-k:])
+            kpos = {int(g): i for i, g in enumerate(np.sort(self.KC))}
+            act |= np.array([kpos[int(x)] in top for x in ids])
+        dead = ids[~act]
+        if len(dead):
+            m = np.isin(self.pre, dead) & self.km_mask
+            self.wM[m] = 0.0
+        self._x_log = getattr(self, "_x_log", [])
+        self._x_log.append({"op": "prune_kc", "dead": int(len(dead)), "of": int(len(ids))})
+        return int(len(dead)), int(act.sum())
 
     def x_report(self):
         """Ile dodano/wycieto + zalozenia. Zwraca dict, drukuje."""

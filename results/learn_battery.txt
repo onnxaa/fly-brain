@@ -92,3 +92,10 @@ STREFA X (x_grow_kc/add_edge/cut_edge, 2026-09-15):
  +256 pseudo-KC (wagi z rozkladow A->K/K->M x0.05): dryf d 0.5% (<5%), KC 5% skaluje (271/5433),
  nowe w top-k 4.8% (losowo 4.7% - partycypuja proporcjonalnie), d -5.67->+1.30 po 3x ethyl+.
  ledger: +256 neuronow +3585 krawedzi ~1 ciecie. PASS-grow (20s).
+
+WZROST 10k: bolus vs protokol (2026-09-15):
+ bolus (wscale .05, random): dryf wzrostu 8.2% (>5%), overlap 8.2%, d po E1 +5.95 (75% pure +7.89)
+ protokol (transze 5x2k + sen + retrain, wscale .01, wejscia z top150 ALPN celu, prune ciszy):
+  d final +7.63 (97% pure!), overlap 9.1%, nowe w top-k 71.4% (los 65.9%)
+ prune: 8764/10000 urodzonych nigdy nie weszlo do kodu (jak dorosla neurogeneza: nadprodukcja + ciec)
+ dryf samego wzrostu splatany z treningiem miedzy transzami (celowo - konsolidacja); wydajnosc uczenia w pelni zachowana.
