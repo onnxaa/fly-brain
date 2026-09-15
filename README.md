@@ -1,8 +1,9 @@
-# Fly Brain — a data-only whole-brain model of *Drosophila*
+# Fly Brain 🪰 — whole-brain *Drosophila* in code
 
-A working simulation of 138,639 neurons / 15,091,983 synapses from the FlyWire
-FAFB v783 connectome (Dorkenwald et al., Nature 2024), with LIF dynamics after
-Shiu et al., Nature 2024.
+> Real FlyWire connectome, frozen data-only: **138,639 neurons / 15,091,983
+> synapses**. Learns, sleeps, sees, smells. Python API + 1:1 superfast C++
+> twin (16× load, 8× train).
+> `github.com/onnxaa/fly-brain` — CC BY-NC 4.0 (non-commercial).
 
 **Core rule (`pure` mode, the default): 100% of topology, Dale signs and |w|
 come from the data.** Only protocol constants are free (stimulus drive, KC
