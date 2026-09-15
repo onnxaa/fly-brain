@@ -109,3 +109,10 @@ WZROST CALOMOZOGOWY (x_grow_assoc, 2026-09-15):
  stare KC nic nie wnosza). Prawdziwa integracja wymaga grubszej anatomii MECH->MB.
  WECH (konflikt ethyl/hex): neurogeneza selektywna 800 -> retencja 16% (pure 55%, bolus -22%):
  wzrost nie chroni STARYCH wspoldzielonych wag - pomaga przyszlym, nie przeszlym pamieciom. Uczciwie odnotowane.
+
+DAN CHRONIACY (gated=True, 2026-09-15):
+ MBON-drive sa niemal identyczne miedzy zapachami (corr 0.93, Jaccard 0.76-0.95) -
+ bramkowanie odpowiedzia MBON nic nie dalo (50% vs 55%). NEGATYW odnotowany, kod usuniety.
+ v2: depresja wazona unikalnoscia KC vs kody (x_remember): shared x1.0, unikalne x0.85.
+ Bez kodow: dokladnie legacy slab (E1 t3 +2.61 = +2.61).
+ konflikt ethyl/hex: +1.31->+1.54 (117% zachowane) vs slab 55% vs neurogeneza 16%.

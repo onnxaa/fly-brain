@@ -761,8 +761,11 @@ class FlyBrainAPI:
         return path
 
     def train(self, image=None, odor=None, mech=None, alpn=None, reward=0.0, punish=0.0, pure=True, thr=0.0,
-              odor_left=None, odor_right=None, mech_left=None, mech_right=None):
-        """reward>0 (PAM: slab-avoid) / punish>0 (PPL1: slab-approach). Zwraca step() po nauce."""
+              odor_left=None, odor_right=None, mech_left=None, mech_right=None, gated=True):
+        """reward>0 (PAM: slab-avoid) / punish>0 (PPL1: slab-approach). Zwraca step() po nauce.
+        gated=True: DAN chroniacy pamieci - depresja wazona unikalnoscia KC wzgledem
+        zarejestrowanych kodow (x_remember): shared KC oszczedzane (x1.0), unikalne x0.85.
+        Bez kodow: legacy slab. gated=False: zawsze legacy slab."""
         idx, val, _ = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
                                   odor_left=odor_left, odor_right=odor_right,
                                   mech_left=mech_left, mech_right=mech_right)
@@ -789,12 +792,33 @@ class FlyBrainAPI:
             for s in range(0, self.E, self.CH):
                 e = slice(s, min(s+self.CH, self.E))
                 self.wM[e] = self.wM[e]*sc[self.post[e]]
+        cur_od = odor if isinstance(odor, str) else None
+        reg = getattr(self, "_x_codes", {})
+        if gated and reg and cur_od is not None:
+            # waga depresji per-KC: 1.0 dla shared z innymi kodami -> 0.85 unikalne
+            others = [v for o, v in reg.items() if o != cur_od]
+            kmki = self.km_ki
+            if others:
+                shared = np.zeros(len(kmki), dtype=np.float32)
+                for v in others:
+                    shared += np.isin(kmki, list(v)).astype(np.float32)
+                fkc = 0.85 + 0.15 * np.minimum(1.0, shared)
+            else:
+                fkc = np.full(len(kmki), 0.85, np.float32)
+        else:
+            fkc = None
         if reward > 0:
             sel = self.km_is_avoid & m[self.km_ki]
-            self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*0.85, self.wM[self.km_mask])
+            if fkc is None:
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*0.85, self.wM[self.km_mask])
+            else:
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*fkc, self.wM[self.km_mask])
         if punish > 0:
             sel = self.km_is_approach & m[self.km_ki]
-            self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*0.85, self.wM[self.km_mask])
+            if fkc is None:
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*0.85, self.wM[self.km_mask])
+            else:
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*fkc, self.wM[self.km_mask])
         self.wM[self.km_mask] = np.maximum(self.wM[self.km_mask], 0.05)
         cur = np.zeros(len(self.MBON)); np.add.at(cur, self.km_mi, self.wM[self.km_mask].astype(float))
         sc = np.ones(len(self.MBON)); nz = cur > 1e-9
