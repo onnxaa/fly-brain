@@ -1,0 +1,68 @@
+DoOR.REAL validation (2026-09-15)
+source: ropensci/DoOR.data data/*.csv (89 files) + door_response_matrix.csv (691x78) + door_mappings.csv (96x20) + door_odor.csv
+builder: door_real.py -> door_odors.npz (consensus incl. inhibition, glomerulus mean, clip(v/max_abs,-1,1))
+geosmin CAS 16423-19-1 (corrected, not 19700-21-1)
+
+door_odors.npz (ORN globals, N_ORN=2279):
+ geosmin 120nz DA2+0.64 | hexanone3 510nz DM1+0.90 DA2+0.32 | co2 1571nz V+1.00
+ butanedione 1916nz DM1+0.34 | methyl_salicylate 1664nz | ethyl_hexanoate 1256nz DA2+0.31
+
+alpn_patterns.npz (ORN->ALPN excitatory 1-hop, 87116 edges ->ALPN, 685 ALPN):
+ geosmin 102/685 max138.0 | hexanone3 245/685 max3741.5 | co2 446/685 max1182.0
+ butanedione 542/685 max3564.4 | methyl_salicylate 471/685 max1293.5 | ethyl_hexanoate 405/685 max1263.0
+ corr 1-hop: hex-but 0.39, co2-methyl 0.28, geo-* ~0.0-0.07 (geosmin decorrelated, DA2 line)
+
+full-brain pure 2-hop (FlyBrainAPI full, fan_abs, thr=0.0):
+ geosmin ALPN_mean 0.015 MB_pref -0.7 | hexanone3 0.034 -9.0 | co2 0.033 -3.4
+ butanedione 0.143 -9.3 | methyl 0.055 -1.0 | ethyl 0.055 -6.3
+ VIS_mean 0.000 all (odor does not drive vision, specificity PASS)
+ KC_active 258/5177 = 5% by def (top-k)
+ corr(sim_ALPN, pred_1hop): geosmin 0.939, hexanone3 0.700, co2 0.824, butanedione 0.603, methyl 0.892, ethyl 0.827
+ corr_sim matrix: geo-hex 0.33, geo-co2 -0.02, hex-but 0.21 (vs 0.39 1-hop: inhibition decorrelates), co2-but 0.31, co2-methyl 0.28
+ KC overlap top5%: 2-43/258 (0.8-16.7%), sparse disjoint (bio ~15% max) PASS (canonical was 12/258 single point)
+
+spikes (Brian MB 6289/548k, LIF, Poisson ALPN):
+ geosmin R150: ALPN 1.7Hz KC 0.00Hz akt 0.1% MBON 0.0Hz (sparse aversive line, correct: weak drive)
+ butanedione R150: ALPN 3.9Hz KC 0.39Hz akt 6.5% MBON 2.2Hz (bio: KC<5Hz & 5-10%, MBON 5-20Hz -> sparsity FIXED vs canonical 23.5%)
+
+learning (full pure):
+ ethyl_hexanoate + reward: pref -6.3 -> -3.7 (d+2.6, avoid depress, correct)
+ geosmin + punish: pref -0.7 -> -1.2 (d-0.4, approach depress, correct)
+
+steering:
+ DN turn 1e-5..2e-5 (noise floor, depth attenuation), motor_pref 1e-5..6e-5 -> steering via MB_pref only
+ gradient (0,0.5,1,2x): geosmin 0.0,-0.3,-0.7,-1.4 slope -1.4; ethyl 0.0,-3.2,-6.3,-12.7 slope -12.7; co2 0.0,-1.7,-3.4,-6.8 slope -6.8
+ baseline all-negative (untrained v3 NT-split 71 approach vs 25 avoid), learning moves correctly
+
+whole-brain train REAL (FlyBrainAPI full pure, fan_abs, R-Hebb all 15M + DAN anti-Hebb K->M, 2026-09-15):
+ t0 ethyl -6.34 geosmin -0.69 d=-5.65 EI=10496512
+ t1 ethyl -3.64 geosmin -1.16 d=-2.48 EI=10522708
+ t2 ethyl -1.30 geosmin -1.56 d=+0.25 EI=10524346
+ t3 ethyl +0.71 geosmin -1.90 d=+2.61 EI=10524735 (+0.27%, <5% PASS)
+ time ~5s/trial (init 9s), RAM ~1GB, topology+Dale frozen
+
+numpy-LIF v2 naprawiony (test_lif.py, 2026-09-15):
+ v1: abs(w), Vth=EL+0.02*fan, Vr>EL, brak refrakcji/delay, drive skokiem v, graded APL tau=500ms, halves-drive
+     -> ALPN 900Hz, KC 127Hz/14%, MBON 0Hz, d=0 FAIL
+ v2: signed w, Brian LIF (v0/rst -52, vth -45, t_mbr 20ms, tau 5ms, refr 2ms, delay 2ms, w_syn 0.275,
+     g-reset przy kolcu), drive przez g (wdrv 68.75) z real DoOR R=150, kolcowy APL + prog x4 (duzy neuron)
+ butanedione: ALPN 4.6Hz (Brian 3.9) KC 0.38Hz akt 5.1% (Brian 0.39/6.5%, bio ~5%) MBON 2.01/0.60 (Brian 2.2) APL 46/65Hz
+ geosmin: ALPN 2.1Hz (Brian 1.7) KC 0.02Hz akt 0.4% (Brian 0.1%) MBON 0.00 (Brian 0.0) APL ~0-1Hz
+ bez APL (real drive): KC 71% MBON 163Hz (epilepsja) -> APL konieczny; bez g-reset: KC 71% (Brian ma g-reset)
+ PASS-lif-data, 15s/2 zapachy (stary Brian-APL assay_apl.py stawal na boxie)
+
+lateralizacja ORN (laterality.py, 2026-09-15):
+ side z supp1.tsv (roles_full.py go gubil): ORN L=1116/R=1133/U=30, ALPN L=341/R=344, MECH L=1363/R=1293
+ istniejace DESC_L/R, EFFERENT_L/R nietkniete (z mediany soma_x, nie z side - lekka rozbieznosc celowo zostawiona)
+ API: step/train(odor_left=, odor_right=) - nazwy DoOR lub wektory, addytywne z odor; out: ALPN_L/R, ORN_L/R, turn_olf=ALPN_L-ALPN_R
+ ethyl L-only: ORN_L 0.252 vs ORN_R 0.018, ALPN ipsi +30%, turn_olf +0.0072; R-only mirror -0.0059; both +0.0011; MB symetria 0.59
+ tropotaksja L/R (gradient, 14 krokow): x 0.20->0.90 (cel 0.8) PASS - bez protezy polowek ALPN
+ regresja: PASS-lesions, PASS-tropotaxis(mb), full odor bez zmian (MB_pref -6.34)
+
+sterowanie boczne: turn_olf vs DN-turn (2026-09-15):
+ DN turn (DESC_L-R) siedzi w podlodze 1e-5 (atenuacja z glebokosci) - bezuzyteczny jako sygnal skretu
+ turn_olf = ALPN_L-ALPN_R (laterality.py): ethyl L-only +0.0072 / R-only -0.0059 / bilateral +0.0011
+ tropotaksja turn_olf (14 krokow, cel 0.8): x 0.20->0.90 PASS
+ MECH_L/R (1363/1293) w rolach + mech_left/right w API: MECH_L 0.168 vs MECH_R 0.001 przy bocznym drive PASS-mech-lat
+ checkpoint: wM_real3.npz (21MB, full, EI 10524735, d -5.64->+2.61 po 3 trialach) + registry
+ rewalidacja po laterality: PASS-flyness (N/E, Dale 100%, dryf 0.12% corr 0.9903)

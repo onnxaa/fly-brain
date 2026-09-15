@@ -1,0 +1,88 @@
+== E1 akwizycja ethyl+/geosmin- x6 ==
+E1 t0: d=-5.64 (ethyl=-6.34 geo=-0.69) (15s)
+E1 t1: d=-2.48 (ethyl=-3.64 geo=-1.16) (33s)
+E1 t2: d=+0.25 (ethyl=-1.30 geo=-1.56) (48s)
+E1 t3: d=+2.61 (ethyl=+0.71 geo=-1.90) (64s)
+E1 t4: d=+4.64 (ethyl=+2.44 geo=-2.20) (70s)
+E1 t5: d=+6.39 (ethyl=+3.94 geo=-2.45) (74s)
+E1 t6: d=+7.89 (ethyl=+5.22 geo=-2.67) (79s)
+== E2 reversal: 3x ethyl+ potem 4x ethyl-/geosmin+ ==
+E2 pre-rev: d=+2.61
+E2 rev1: d=+0.23 (ethyl=-1.11 geo=-1.35) (95s)
+E2 rev2: d=-1.82 (ethyl=-2.69 geo=-0.87) (100s)
+E2 rev3: d=-3.59 (ethyl=-4.05 geo=-0.46) (105s)
+E2 rev4: d=-5.12 (ethyl=-5.21 geo=-0.10) (110s)
+== E3 dyskryminacja trudna hexanone3+/butanedione- (corr 0.39) x5 ==
+E3h t0: d=+0.28 (111s)
+E3h t1: d=+6.03 (116s)
+E3h t2: d=+11.01 (121s)
+E3h t3: d=+15.30 (125s)
+E3h t4: d=+19.00 (130s)
+E3h t5: d=+22.19 (135s)
+== E3 dyskryminacja latwa geosmin+/co2- x3 ==
+E3e t0: d=+2.69 (137s)
+E3e t1: d=+4.20 (141s)
+E3e t2: d=+5.51 (146s)
+E3e t3: d=+6.64 (151s)
+== E4 ekstynkcja: 3x ethyl+ potem 4x ethyl solo ==
+E4 post-acq: d=+1.31
+E4 ext1: d=+1.31 (22s)
+E4 ext2: d=+1.31 (24s)
+E4 ext3: d=+1.31 (26s)
+E4 ext4: d=+1.31 (29s)
+== E5 generalizacja: 3x ethyl+, sondy 6 zapachow vs geosmin ==
+E5 probe geosmin: d_vs_geo=+0.00 corr(ethyl,geosmin)=+0.07
+E5 probe hexanone3: d_vs_geo=-7.16 corr(ethyl,hexanone3)=+0.17
+E5 probe co2: d_vs_geo=-2.67 corr(ethyl,co2)=+0.12
+E5 probe butanedione: d_vs_geo=-8.46 corr(ethyl,butanedione)=+0.15
+E5 probe methyl_salicylate: d_vs_geo=-0.30 corr(ethyl,methyl_salicylate)=+0.18
+E5 probe ethyl_hexanoate: d_vs_geo=+1.31 corr(ethyl,ethyl_hexanoate)=+1.00
+== E6 mieszaniny ethyl:geosmin (stosunki, bez treningu, swiezy mozdzek) ==
+E6 ethyl=1.00: MB_pref=-6.34
+E6 ethyl=0.50: MB_pref=-2.95
+E6 ethyl=0.25: MB_pref=-1.16
+E6 ethyl=0.00: MB_pref=-0.69
+== E7 retencja: 3x ethyl+, 6 neutralnych triali ==
+E7 post-acq: d=+1.31
+E7 neu1: d=+1.31 (56s)
+E7 neu2: d=+1.31 (58s)
+E7 neu3: d=+1.31 (60s)
+E7 neu4: d=+1.31 (63s)
+E7 neu5: d=+1.31 (65s)
+E7 neu6: d=+1.31 (68s)
+
+WNIOSKI (2026-09-15):
+ E1: monotoniczna akwizycja -5.64->+7.89/6 triali, bez saturacji.
+ E2: reversal przechodzi zero w 1-2 triale (+0.23->-1.82) - elastycznosc jak u muchy.
+ E3: para trudna (corr 0.39) separuje NAWET SZYBCIEJ (+0.28->+22.19) - szerokie zapachy = wieksze wzorce KC = wieksze update DAN.
+ E4: BRAK ekstynkcji (d stale +1.31) - reward=0 nie rusza wag; model nie zapomina. Luka vs biologia.
+ E5: transfer czesciowy: methyl (corr 0.18, najpodobniejszy) -0.30 vs hex -7.16/buta -8.46 - slad gradacji podobienstwem, bez twardego prawa; bez baseline'ow pre - do powtorki rygorystycznie.
+ E6: monotoniczny tradeoff mieszanin -6.34->-0.69 (offset ujemny: mozdzek nietrenowany).
+ E7: retencja idealna (brak pasywnego decay - ta sama luka co E4).
+ E4-post-acq +1.31 (sama nagroda) vs E1t3 +2.61 (nagroda+kara): trening opponent 2x skuteczniejszy.
+
+SEN SHY (sleep(), 2026-09-15):
+ mechanizm: proporcjonalne skalowanie magnitud do baseline (wM0) z zachowaniem roznic;
+ znaki nietkniete; setpointy ref sledza nowy stan (renorm nie cofa snu). rate=0.02 protokol.
+ krzywa zapominania: d +2.61->+0.83 / 12 snow (monotonicznie)
+ tozsamosc po 12: dryf 0.03% corr 0.9939 Dale 100%
+ ekstynkcja CS-alone+sen: +1.31->+0.52 / 3 rundy (behawioralnie dziala; mechanistycznie to decay, nie nowe uczenie - odnotowane)
+ pojemnosc 20 triali + sen/5: d +11.89 floor 0.0% (bez snu +12.48/0.3%)
+ rate: 0.01 zostawia 64%, 0.05 odwraca do -45% (za szybki) - domysl 0.02 to srodek, stala czasowa jest protokołem jak 0.85
+
+SEN AUTONOMICZNY (enable_auto_sleep, 2026-09-15):
+ model Borbelyego: S rosnie z aktywnoscia KC (skalar jak elig), C = swiatlo z wejscia (zeitgeber);
+ sen gdy S>thr i (noc LUB S>2x thr - override jak przy deprywacji); pobudka S<0.3.
+ w snie: drive x0.2 (prog pobudzenia) + mikro-dawka SHY 0.002/krok; log przejsc w _sleep_log, S/asleep w out.
+ zegar: neurony SA (s-LNv/l-LNv/DN1/LNd ~50), ale brak oscylatora molekularnego TTFL (biochemia, nie synapsy), PDF w duzej mierze parakrynny i rytmu ~24h z stalych blonowych (20ms) sie nie wywiedzie - C idzie ze swiatla (entrainment).
+ ER2 (homeostat R2) cichy w rate (0.0) - S liczone z KC, nie z ER2. Luka odnotowana.
+ cykl: dzien x22 S=1.1 bez snu (blokada) -> noc: sen 9 krokow (ALPN 0.011 vs 0.055) -> pobudka.
+ wytrenowany d +1.31 -> +1.16 po jednej emergentnej nocy (sen zjada nauke - dziala).
+ regresja: auto domyslnie OFF, PASS-lesions.
+
+ZEGAR TTFL (clock.py + enable_clock, 2026-09-15):
+ Goldbeter 1995 pelne rownania: DD 23h, LD entrainment corr 1.0. 1 krok API = 1h (protokol).
+ Sygnal na WLASCIWE neurony: M=s-LNv/l-LNv (18), E=LNd/DN1 (28), bipolarne +-amp, antyfaza na odczycie
+ (amp 0.5: M +0.32/-0.40, E lustro; amp 2.0: 4x). Domysl 0.5 (modulacyjny wobec drive 2.0).
+ Bramka C: faza TTFL (P2 vs srednia kroczaca), nie swiatlo.
+ DD: sen free-run okres ~24 kroki (20-27, 44-51, 68-71). LD 12:12: sen w ciemnej polowie, stabilnie 3 doby.

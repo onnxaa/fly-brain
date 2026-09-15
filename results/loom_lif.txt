@@ -1,0 +1,7 @@
+sugar: DNp01=0.0Hz DNp04=0.0Hz DNa02=1.0Hz MN9=60.0Hz PREM=12.0Hz APL=0.0Hz (93s)
+loom: DNp01=212.0Hz DNp04=242.0Hz DNa02=0.0Hz MN9=0.0Hz PREM=0.0Hz APL=0.0Hz (105s)
+conflict: DNp01=212.0Hz DNp04=241.0Hz DNa02=0.0Hz MN9=0.0Hz PREM=0.0Hz APL=0.0Hz (102s)
+SUPRESJA MN9 kolcowo: 100.0% (60Hz->0Hz, papier ~100%, 80Hz->cisza); PREM 12Hz->0Hz
+DNa02 cichy we wszystkich warunkach (sterowanie nierekrutowane w tym paradygmacie - jak w rate)
+Naprawa bez full-Briana: numpy-LIF na calym mozgu (jak test_lif v2), 500ms ~100s/warunek.
+Rate-good na plytkie (DN synergia), kolce na glebokie (MN9) - granica rate potwierdzona i obejscieta.

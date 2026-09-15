@@ -1,0 +1,4 @@
+sugar LB3: 122
+>>> Experiment:     sugar_lb3
+    Output file:    results/sugar_lb3.parquet
+    Excited neurons: 122

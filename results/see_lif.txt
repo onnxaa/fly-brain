@@ -1,0 +1,24 @@
+static: LCmean=0.00Hz per-blok=['0.0', '0.0', '0.0', '0.0', '0.0'] DNp01=0.0Hz DNp04=0.0Hz MN9=0.0Hz (105s)
+flash: LCmean=0.00Hz per-blok=['0.0', '0.0', '0.0', '0.0', '0.0'] DNp01=0.0Hz DNp04=0.0Hz MN9=0.0Hz (64s)
+diagnoza flash: R7/R8 66Hz (oko ZYJE), Dm9 2.4Hz/max56 (pierwszy relay ok), L1-L5/Tm/Mi/T4/T5/T2/LC4/LPLC2 = 0.00
+anatomia: top cele R7/R8 to Dm9 (86-174, amakryna) + DRA (polaryzacja) + MeMe; brak silnego feedforward do Tm5/Tm9/Tm20
+R1-R6 (tor ruchu/jasnosci, wejscie L1/L2) NIE MA w v783 -> caly plat za nimi gluchy mimo 66Hz na siatkowce
+wniosek: bez sztucznej siatkowki mucha widzi swiatlo, nie ksztalty/ruch; naprawa = dopisanie R1-R6 przez FlyWire (poza nami)
+paradoks: placeholder image->VIS daje WIECEJ widzenia niz wspieraja dane (omija urwany front-end)
+flash: LCmean=0.00Hz per-blok=['0.0', '0.0', '0.0', '0.0', '0.0'] DNp01=0.0Hz DNp04=0.0Hz MN9=0.0Hz (65s)
+loom: LCmean=0.00Hz per-blok=['0.0', '0.0', '0.0', '0.0', '0.0'] DNp01=0.0Hz DNp04=0.0Hz MN9=0.0Hz (100s)
+flash: LCmean=10.63Hz per-blok=['0.0', '0.0', '11.7', '20.4', '21.1'] DNp01=19.0Hz DNp04=51.0Hz MN9=0.0Hz (80s)
+loom: LCmean=8.87Hz per-blok=['5.3', '9.9', '11.9', '10.2', '7.1'] DNp01=48.0Hz DNp04=45.0Hz MN9=0.0Hz (115s)
+static: LCmean=9.93Hz per-blok=['5.3', '9.8', '11.8', '11.6', '11.1'] DNp01=45.0Hz DNp04=55.0Hz MN9=0.0Hz (107s)
+recede: LCmean=8.35Hz per-blok=['2.6', '7.4', '10.2', '11.3', '10.3'] DNp01=24.0Hz DNp04=45.0Hz MN9=0.0Hz (119s)
+loom: LCmean=8.92Hz per-blok=['4.8', '11.0', '10.8', '10.0', '8.0'] DNp01=42.0Hz DNp04=50.0Hz MN9=0.0Hz (122s)
+wniosek: R1-6 SA w danych (7932, typ "R1-6" - wczesniejszy regex ^R[1-8]$ ich nie lapal, blad skorygowany)
+LIF-wszedzie dusi wczesne widzenie (R 65Hz -> L 6Hz -> Tm 1Hz -> T 0Hz): warstwy graded + progi kolcowe = 10x strat na warstwe
+fix fizjologiczny: 38871 neuronow wczesnego widzenia (R/Lai/L/Dm/Mi/Tm/C2/C3) jako GRADED (toniczny releas d*KREL, KREL=20Hz/mV),
+kolcowe od T4/T5 w gore. Zero liczenia ruchu w kodzie - tylko fototransdukcja + fizjologia + wagi.
+flash: LC 0->21Hz, DNp01 19Hz DNp04 51Hz (caly tor przewodzi!)
+loom(4->28): LC 5.3/9.9/11.9/10.2/7.1 DNp01 48Hz (seed8: 42Hz) DNp04 45Hz
+recede(28->4): LC 2.6/7.4/10.2/11.3/10.3 DNp01 24Hz
+static: LC 9.9 DNp01 45 DNp04 55 (odpowiedz na modulacje swiatla, nie tylko ekspansje)
+pooled-LC nie rozroznia kierunku ekspansji (dominacja luminancji/transientu), ale DNp01 (trigger ucieczki) TAK: loom 2x recede, 2 seedy
+MN9 0 we wszystkich (ucieczka nie miesza karmienia bez cukru - spojne z loom_exp)

@@ -1,0 +1,26 @@
+Replikacja: ucieczka-vs-karmienie (paper SNN v783, 2026-09-15, loom_exp.py)
+Protokol papieru: loom = drive LC4(104)+LPLC2(210) @150Hz-terminal; rate pure w j.a.
+Roundup nie istnieje w supp1 v783 -> pula PREM = top8 driverow MN9 (w 561..92, DNge062/CB0553/...).
+
+ZREPLIKOWANE:
+ loom100%: DNp01=0.42 DNp04=1.13 (synergia trigger+postawa; na sugar oba 0.00)
+ dawka 25/50/100%: DNp01 0.10/0.21/0.42, DNp04 0.29/0.55/1.13 (liniowo, frakcja wystarcza)
+ hops=4: supresja MN9 27% (0.00119->0.00086), PREM -10% (kierunek przez pule premotoryczna, jak w papierze)
+
+NIEZREPLIKOWANE:
+ sila supresji: 27% vs ~100% (80Hz->cisza); DNa02 ~0.001 (sterowanie ciche);
+ wyciszanie DNge031/CB0565: niemierzalne (baseline MN9 ~0 w rate)
+PRZYCZYNA: fan-normalizacja (agg/fan) stabilizuje plytkie sciezki kosztem glebokich -
+ lancuch sugar->MN9 ma wiele hopow i umiera z glebokoscia (hops=2: 3e-5, hops=4: 1.2e-3, plateau).
+ SNN papieru bez normalizacji propaguje do 80Hz. Domkniecie = kolcowy full-brain ( dzis OOM).
+
+DNa02: cisza WYTSlUMACZONA (2026-09-15):
+ anatomia: wejscia DNa02 = DNa03/DNae005/DNa11/LAL018 (LAL + inne DN), ZERO z LC4/LPLC2.
+ DNa02 to integrator sterowania za selekcja akcji (LAL), nie follower loomu - oczekiwanie bylo bledne, nie siec.
+ test boczny: loom-L -> DNp01_L 0.40 (R 0.006), mirror; DNa02 ~0.001 przy kazdym (centrowany i boczny).
+ DNp01 jest ipsilateralny (kierunek skretu vs strona DN do interpretacji przy readout).
+ rekrutacja DNa02 wymaga drive'u LAL (kompas CX), nie bodzca wzrokowego - osobny eksperyment.
+
+Luka DNa02 ZAMKNIETA (2026-09-15):
+ drive anatomcznych driverow: LAL018 -> DNa02 0.029 (29x tlo); LAL018+DNa03+DNae005+DNa11 -> 0.129 (129x).
+ integrator sterowania sprawny, czeka na LAL - rezerwa potwierdzona, nie usterka.
