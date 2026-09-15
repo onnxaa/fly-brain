@@ -1074,10 +1074,10 @@ class FlyBrainAPI:
         if getattr(self, "km_mask", None) is not None and len(self.km_mask) == n0:
             self.km_mask = np.concatenate(
                 [self.km_mask, np.zeros(len(self.pre) - n0, dtype=bool)])
+        if getattr(self, "_fan", None) is not None and len(self._fan) < self.N:
+            self._fan = np.concatenate([self._fan, np.ones(self.N - len(self._fan), np.float32)])
         if self.mode == "full":
             self.elig = np.concatenate([self.elig, np.zeros(len(self.pre) - n0, np.float32)])
-            if getattr(self, "_fan", None) is not None and len(self._fan) < self.N:
-                self._fan = np.concatenate([self._fan, np.ones(self.N - len(self._fan), np.float32)])
             fan = np.zeros(self.N, dtype=np.float64)
             np.add.at(fan, self.post[n0:], np.abs(pw).astype(float))
             if getattr(self, "_fan", None) is not None:
