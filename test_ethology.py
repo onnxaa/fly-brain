@@ -24,8 +24,19 @@ Modes (each standalone):
                steps), occlude it + show distractor (20 steps), restore
                target (20 steps). Metrics: capture by distractor (proves
                stimulus-driven steering, not ballistic) + return time.
+  heatbox    - Operant place learning (Wustmann-Heisenberg): 1D chamber,
+               hot half x>0 punished. Position enters as 8-bin one-hot via
+               alpn= (PROSTHESIS, non-data: the real box is dark/landmark-
+               free, unsolvable without idiothetic input). Spinal policy:
+               reverse when bin MB_pref drops >2 below naive. Contingent
+               vs yoked (replayed schedule) vs naive; metric hot% halves.
+  spaced     - Massed (5x back-to-back) vs spaced (5x with night+sleep
+               between) punishment pairings, then 24h + long sleep.
+               Sleep runs SHY wash (the only forgetting); no consolidation
+               mechanism exists (no LTM/ARM split) and nothing decays
+               awake - retention vs awake control documents both.
 
-Usage: python3 test_ethology.py tmaze|train_fix|buridan|habituate|detour
+Usage: python3 test_ethology.py tmaze|train_fix|buridan|habituate|detour|heatbox|heatbox_ctl|spaced
 """
 import sys
 import numpy as np
@@ -293,6 +304,151 @@ def detour(steps=20):
           f"return-time={ret}/{steps} final-err={e_end:.0f}deg", flush=True)
 
 
+HB_BINS = 8
+
+
+def place_code(x):
+    v = np.zeros(HB_BINS, np.float32)
+    b = min(HB_BINS - 1, max(0, int((x + 10) / 20 * HB_BINS)))
+    v[b] = 1.0
+    return v, b
+
+
+def heatbox_run(cond, sched, steps=100, test=40, pun_us=0.5):
+    api = FlyBrainAPI(mode="full", path=".")
+    api.enable_scaling()
+    init = [api.step(alpn=place_code(-10 + 20 * (b + 0.5) / HB_BINS)[0])["MB_pref"]
+            for b in range(HB_BINS)]
+    usched = sched
+    if cond == "unpaired":
+        import random as _rnd
+        usched = sched[:]
+        _rnd.Random(3).shuffle(usched)
+    x, direction = (+5.0, -1) if cond == "yoked" else (-5.0, +1)
+    hot1, hot2, sched_out, cool = 0, 0, [], 0
+    for i in range(steps):
+        v, b = place_code(x)
+        pref = api.step(alpn=v)["MB_pref"]
+        if cool > 0:
+            cool -= 1
+        elif pref < init[b] - 2.0:
+            direction *= -1
+            cool = 6  # committed turn maneuver, no border dither
+        x += direction * 0.5
+        if x > 10:
+            x, direction = 10.0, -1
+        if x < -10:
+            x, direction = -10.0, +1
+        hot = x > 0
+        if cond == "contingent":
+            pun = hot
+        elif cond == "naive":
+            pun = False
+        else:
+            pun = bool(usched[i])
+        if pun:
+            api.train(alpn=v, punish=pun_us)
+        sched_out.append(1 if pun else 0)
+        if hot:
+            if i < steps // 2:
+                hot1 += 1
+            else:
+                hot2 += 1
+    thot = 0
+    for _ in range(test):  # unpunished memory test
+        v, b = place_code(x)
+        pref = api.step(alpn=v)["MB_pref"]
+        if cool > 0:
+            cool -= 1
+        elif pref < init[b] - 2.0:
+            direction *= -1
+            cool = 6
+        x += direction * 0.5
+        if x > 10:
+            x, direction = 10.0, -1
+        if x < -10:
+            x, direction = -10.0, +1
+        thot += x > 0
+    h = steps // 2
+    print(f"{cond}: train-hot% {hot1 / h * 100:.0f}/{hot2 / h * 100:.0f} "
+          f"test-hot%={thot / test * 100:.0f}", flush=True)
+    return sched_out
+
+
+def heatbox():
+    sched = heatbox_run("contingent", None)
+    np.save("hb_sched.npy", np.array(sched, np.int8))
+    heatbox_run("naive", None)
+
+
+def heatbox_ctl():
+    sched = [bool(v) for v in np.load("hb_sched.npy").tolist()]
+    heatbox_run("yoked", sched)
+    heatbox_run("unpaired", sched)
+
+
+def sleep_bout(api, want_asleep=8, max_steps=120):
+    slept = 0
+    for _ in range(max_steps):
+        o = api.step(odor=CS_SAFE)
+        if o.get("asleep"):
+            slept += 1
+            if slept >= want_asleep:
+                break
+    for _ in range(40):
+        o = api.step(odor=CS_SAFE)
+        if not o.get("asleep"):
+            break
+    return slept
+
+
+def spaced_setup(api):
+    api.enable_clock()
+    api.enable_auto_sleep(k_wake=1.0)  # accelerated sleep pressure (protocol)
+    api.tick_clock(12, light=0.0)  # night
+    return api
+
+
+def spaced_pi(api):
+    s = api.step(odor=CS_SAFE)["MB_pref"]
+    p = api.step(odor=CS_SHOCK)["MB_pref"]
+    return pi_of(s, p)
+
+
+def spaced():
+    m = FlyBrainAPI(mode="full", path=".")
+    m.enable_scaling()
+    for _ in range(5):
+        m.train(odor=CS_SHOCK, punish=1.0)
+    print(f"massed immediate PI={spaced_pi(m):+.2f}", flush=True)
+    s = FlyBrainAPI(mode="full", path=".")
+    s.enable_scaling()
+    spaced_setup(s)
+    for _ in range(5):
+        s.train(odor=CS_SHOCK, punish=1.0)
+        s.tick_clock(2, light=0.0)
+        sleep_bout(s, 4)
+    print(f"spaced immediate PI={spaced_pi(s):+.2f} (expect ~= massed: "
+          f"no interference mechanism)", flush=True)
+    spaced_setup(m)
+    m.tick_clock(12, light=0.0)
+    n1 = sleep_bout(m, 40)
+    print(f"massed retention PI={spaced_pi(m):+.2f} after 24h + {n1} "
+          f"sleep steps (SHY wash = the only forgetting)", flush=True)
+    s.tick_clock(12, light=0.0)
+    n2 = sleep_bout(s, 40)
+    print(f"spaced retention PI={spaced_pi(s):+.2f} after 24h + {n2} "
+          f"sleep steps (no consolidation: no LTM/ARM split)", flush=True)
+    a = FlyBrainAPI(mode="full", path=".")
+    a.enable_scaling()
+    for _ in range(5):
+        a.train(odor=CS_SHOCK, punish=1.0)
+    p0 = spaced_pi(a)
+    p1 = spaced_pi(a)
+    print(f"awake control: PI={p0:+.2f}..{p1:+.2f} (nothing decays awake)",
+          flush=True)
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "tmaze"
     if mode == "tmaze":
@@ -305,6 +461,12 @@ def main():
         habituate()
     elif mode == "detour":
         detour()
+    elif mode == "heatbox":
+        heatbox()
+    elif mode == "heatbox_ctl":
+        heatbox_ctl()
+    elif mode == "spaced":
+        spaced()
     else:
         print("unknown mode", flush=True)
 
