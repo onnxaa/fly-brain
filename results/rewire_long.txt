@@ -1,0 +1,26 @@
+pre-A: d(geo-eth)=+5.64 (geo=-0.69 eth=-6.34) EI=10496512 dryf=0.00% floor=0.0% (10s)
+At5: d(geo-eth)=+14.70 (geo=+1.41 eth=-13.29) EI=10524782 dryf=0.05% floor=0.0% (28s)
+At10: d(geo-eth)=+18.86 (geo=+2.43 eth=-16.43) EI=10524816 dryf=0.06% floor=0.0% (45s)
+A+sen: d(geo-eth)=+18.33 (geo=+2.30 eth=-16.02) EI=10523695 dryf=0.05% floor=0.0% (48s)
+snapshot wM_rewire_A.npz
+resume z wM_rewire_A.npz
+pre-B: d(geo-eth)=+18.33 (geo=+2.30 eth=-16.02) EI=10523695 dryf=0.05% floor=0.0% (10s)
+Bt5: d(geo-eth)=+20.56 (geo=+2.84 eth=-17.72) EI=10524833 dryf=0.06% floor=0.0% (28s)
+Bt10: d(geo-eth)=+21.61 (geo=+3.13 eth=-18.48) EI=10524866 dryf=0.06% floor=1.1% (45s)
+B+sen: d(geo-eth)=+20.97 (geo=+2.97 eth=-18.00) EI=10523744 dryf=0.06% floor=0.0% (47s)
+snapshot wM_rewire_B.npz
+resume z wM_rewire_B.npz
+pre-C: d(geo-eth)=+20.97 (geo=+2.97 eth=-18.00) EI=10523744 dryf=0.06% floor=0.0% (10s)
+Ct5: d(geo-eth)=+21.78 (geo=+3.19 eth=-18.59) EI=10524882 dryf=0.06% floor=1.1% (29s)
+Ct10: d(geo-eth)=+22.17 (geo=+3.33 eth=-18.84) EI=10524920 dryf=0.06% floor=2.1% (46s)
+C+sen: d(geo-eth)=+21.50 (geo=+3.16 eth=-18.34) EI=10523794 dryf=0.06% floor=0.0% (48s)
+snapshot wM_rewire_C.npz
+resume z wM_rewire_C.npz
+pre-stab: d(geo-eth)=+21.50 (geo=+3.16 eth=-18.34) EI=10523794 dryf=0.06% floor=0.0% (10s)
+post-stab: d(geo-eth)=+20.86 (geo=+2.99 eth=-17.86) EI=10522714 dryf=0.06% floor=0.0% (17s)
+
+PODSUMOWANIE (30 triali + sen + stabilnosc):
+ pre: geo -0.69 / eth -6.34 (oba ujemne) -> C+sen: geo +3.16 / eth -18.34 (pelna inwersja walencji)
+ d: +5.64 -> +18.33 (A) -> +20.97 (B) -> +21.50 (C), stab +20.86 (trzyma -3%)
+ tozsamosc: dryf 0.06% (limit 5%), floor 0->2.1%->0.0% po snie (sen zwalnia!), EI +0.03%
+ rewire wylacznie funkcjonalny (magnitudy; topologia+Dale nietkniete).
