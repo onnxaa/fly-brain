@@ -125,6 +125,22 @@ corr 0.60–0.94. Acquisition d −5.65→+7.89; reversal crosses zero in 1–2 
 tropotaxis 0.20→0.90 all PASS. Full numbers: `results/*.txt`,
 checkpoints: `weights_registry.json`.
 
+## MCNS (real MALE whole-CNS, one animal) ⭐ newest
+
+`FlyBrainAPI(mode="mcns")` runs the MCNS v1.0 connectome (Berg et al., Cell
+2026): **165,122 traced neurons / 25,563,096 edges**, brain + VNC in ONE male
+animal with intact neck connective. Frozen topology + Dale from per-body NT
+consensus (ACh=+1, GABA/glutamate/histamine=-1, monoamines=+1 protocol).
+KC 4064 / MBON 97 (61,210 KC→MBON) / DAN PAM+PPL1; valence approach 75 +
+avoid 27 ported from FAFB by MBON type name; DoOR 6 odors via `ORN_<glom>`;
+motor leg (Pro/Meso/MetaLN 161/158 L/R), wing 34, neck (CvN) 4.
+
+Measured (`test_mcns.py` PASS, ~2 s/step): geosmin MB=-4.38 vs ethyl -10.87,
+reward d=+1.51 / punish d=-0.90, mech→DESC 0.18/0.15 → legs 0.049/0.058 +
+wing 0.070 + neck 0.083 (intact chain). Build: `build_mcns.py` (streams
+151M-row weights, feeders git-ignored). No vision front-end / clock / C++
+twin yet (v2).
+
 ## BANC (real female whole-CNS, one animal)
 
 `FlyBrainAPI(mode="banc")` runs the BANC v888 connectome (Bates/Phelps/Kim/Yang,

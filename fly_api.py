@@ -40,7 +40,7 @@ IMG_N = 64 * 64
 
 class FlyBrainAPI:
     def __init__(self, mode="mb", seed=1, path="."):
-        assert mode in ("mb", "full", "banc")
+        assert mode in ("mb", "full", "banc", "mcns")
         self.mode, self.path = mode, path
         rng = np.random.default_rng(seed)
         self.in_dim, self.hid = 8, 16
@@ -144,7 +144,7 @@ class FlyBrainAPI:
             self._img_proj = None
             import pyarrow.parquet as pq
             self._pf = pq.ParquetFile(f"{path}/Connectivity_783.parquet")
-        else:
+        elif mode == "banc":
             # banc: female whole-CNS (BANC v888, Bates et al. Nature 2026) -
             # brain + VNC in ONE animal, intact neck connective. Frozen
             # topology/Dale from BANC (see build_banc.py).
@@ -171,6 +171,48 @@ class FlyBrainAPI:
             self.MECH = np.asarray(r["SENS"], dtype=np.int32)
             self.MECH_L = self.MECH[_side[self.MECH] == "left"]
             self.MECH_R = self.MECH[_side[self.MECH] == "right"]
+            self.DESC_L = np.asarray(r["DESC_L"], dtype=np.int32)
+            self.DESC_R = np.asarray(r["DESC_R"], dtype=np.int32)
+            self.ALPN = np.zeros(0, np.int32)
+            self.ALPN_L = np.zeros(0, np.int32); self.ALPN_R = np.zeros(0, np.int32)
+            self.VIS = np.zeros(0, np.int32); self.VIS_eye = np.zeros(0, np.int32)
+            self.EFFERENT = np.zeros(0, np.int32)
+            self.ME = np.zeros(0, np.int32); self.LO = np.zeros(0, np.int32)
+            self.R = np.zeros(0, np.int32)
+            self.MOTOR = np.asarray(r["MOTOR"], dtype=np.int32)
+            self.MOTOR_leg_L = np.asarray(r["leg_L"], dtype=np.int32)
+            self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
+            self.MOTOR_wing = np.asarray(r["wing"], dtype=np.int32)
+            self.MOTOR_neck = np.asarray(r["neck"], dtype=np.int32)
+            self._img_proj = None
+            self._pf = None
+        elif mode == "mcns":
+            # mcns: MALE whole-CNS (MCNS v1.0, Berg et al., Cell 2026) -
+            # brain + VNC in ONE male animal, intact neck connective. Frozen
+            # topology/Dale from MCNS (see build_mcns.py).
+            d = np.load(f"{path}/male_circuit.npz")
+            self.pre = np.asarray(d["pre"], dtype=np.int32)
+            self.post = np.asarray(d["post"], dtype=np.int32)
+            self.sign = np.asarray(d["sign"], dtype=np.float32)
+            self.wM = np.asarray(d["weight"], dtype=np.float32)
+            self.N = int(d["N"][0])
+            self.E = len(self.pre)
+            self._fan = np.asarray(d["fan"], dtype=np.float32)
+            r = np.load(f"{path}/male_roles.npz", allow_pickle=True)
+            self.KC = np.asarray(r["KC"], dtype=np.int32)
+            self.MBON = np.asarray(r["MBON"], dtype=np.int32)
+            self.DAN = np.zeros(0, np.int32)
+            self.approach = np.asarray(r["approach"], dtype=np.int32)
+            self.avoid = np.asarray(r["avoid"], dtype=np.int32)
+            self.dan_pam = np.asarray(r["dan_pam"], dtype=np.int32)
+            self.dan_ppl = np.asarray(r["dan_ppl"], dtype=np.int32)
+            self.ORN = np.asarray(r["ORN"], dtype=np.int32)
+            _side = np.asarray(r["side"]).astype(str)
+            self.ORN_L = self.ORN[_side[self.ORN] == "L"]
+            self.ORN_R = self.ORN[_side[self.ORN] == "R"]
+            self.MECH = np.asarray(r["SENS"], dtype=np.int32)
+            self.MECH_L = self.MECH[_side[self.MECH] == "L"]
+            self.MECH_R = self.MECH[_side[self.MECH] == "R"]
             self.DESC_L = np.asarray(r["DESC_L"], dtype=np.int32)
             self.DESC_R = np.asarray(r["DESC_R"], dtype=np.int32)
             self.ALPN = np.zeros(0, np.int32)
@@ -237,7 +279,7 @@ class FlyBrainAPI:
         self.emb = rng.normal(0, 0.5, size=(self.N, self.in_dim)).astype(np.float32)
         self.Wmsg = rng.normal(0, 0.3, size=(self.in_dim, self.hid)).astype(np.float32)
         self.Wself = rng.normal(0, 0.3, size=(self.in_dim, self.hid)).astype(np.float32)
-        if mode in ("full", "banc"):
+        if mode in ("full", "banc", "mcns"):
             self.Wmsg2 = rng.normal(0, 0.3, size=(self.hid, self.hid)).astype(np.float32)
             self.Wself2 = rng.normal(0, 0.3, size=(self.hid, self.hid)).astype(np.float32)
             self.Wmsg3 = rng.normal(0, 0.3, size=(self.hid, self.hid)).astype(np.float32)
@@ -302,7 +344,7 @@ class FlyBrainAPI:
 
     def get_hops(self):
         """Current default readout depth."""
-        return int(getattr(self, "_hops", 2 if self.mode in ("full", "banc") else 1))
+        return int(getattr(self, "_hops", 2 if self.mode in ("full", "banc", "mcns") else 1))
 
     def enable_vnc(self, bridge_w=1.0):
         """Load the real VNC (MANC v1.2.1): 23,650 neurons / 5.3M edges.
@@ -773,9 +815,11 @@ class FlyBrainAPI:
                     idx.append(sel); val.append(np.full(len(sel), 2.0, np.float32))
                 elif _os3.path.exists(_door) and odor in (
                         "geosmin", "co2", "hexanone3", "methyl_salicylate", "butanedione", "ethyl_hexanoate"):
-                    if self.mode not in ("full", "banc"):
+                    if self.mode not in ("full", "banc", "mcns"):
                         raise ValueError(f"odor '{odor}' (DoOR, ORN) requires mode='full'/'banc'; in mb use 'A'/'B' or a vector")
-                    _dd = np.load(f"{self.path}/banc_door.npz") if self.mode == "banc" else np.load(_door)
+                    _doorfile = {"full": _door, "banc": f"{self.path}/banc_door.npz",
+                                 "mcns": f"{self.path}/male_door.npz"}[self.mode]
+                    _dd = np.load(_doorfile)
                     idx.append(_dd[odor+"_idx"]); val.append((_dd[odor+"_val"]*2.0).astype(np.float32))
                 else:
                     if _os3.path.exists(_of) and len(self.ORN) and odor in ("A", "B"):
@@ -795,7 +839,7 @@ class FlyBrainAPI:
             a = np.asarray(alpn, dtype=np.float32); n = min(len(a), len(self.ALPN))
             idx.append(self.ALPN[:n]); val.append((a[:n]*2.0).astype(np.float32))
         if (odor_left is not None or odor_right is not None):
-            if self.mode not in ("full", "banc") or not len(getattr(self, "ORN_L", [])):
+            if self.mode not in ("full", "banc", "mcns") or not len(getattr(self, "ORN_L", [])):
                 raise ValueError("lateral odors require mode='full' with ORN_L/R (laterality.py)")
             for od, side in ((odor_left, self.ORN_L), (odor_right, self.ORN_R)):
                 if od is None:
@@ -811,7 +855,7 @@ class FlyBrainAPI:
             m = np.asarray(mech, dtype=np.float32); n = min(len(m), len(self.MECH))
             idx.append(self.MECH[:n]); val.append((m[:n]*2.0).astype(np.float32))
         if (mech_left is not None or mech_right is not None):
-            if self.mode not in ("full", "banc") or not len(getattr(self, "MECH_L", [])):
+            if self.mode not in ("full", "banc", "mcns") or not len(getattr(self, "MECH_L", [])):
                 raise ValueError("lateral mech requires mode='full' with MECH_L/R (laterality.py)")
             for md, side in ((mech_left, self.MECH_L), (mech_right, self.MECH_R)):
                 if md is None:
@@ -1047,7 +1091,7 @@ class FlyBrainAPI:
         # ONLY via tick_clock() - otherwise a 10Hz mob would spin a day in 2s.
         # hops=None -> self._hops (set_hops); mb default 1, full default 2.
         if hops is None:
-            hops = int(getattr(self, "_hops", 2 if self.mode in ("full", "banc") else 1))
+            hops = int(getattr(self, "_hops", 2 if self.mode in ("full", "banc", "mcns") else 1))
         else:
             hops = int(hops)
         idx, val, info = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
@@ -1065,10 +1109,10 @@ class FlyBrainAPI:
             # full LIF sim: same dict in Hz (hops/T ignored except Tms window).
             h = self._forward_spike(idx, val)
         elif pure:
-            h = self._forward_pure(idx, val, hops=hops, thr=thr) if self.mode in ("full", "banc") \
+            h = self._forward_pure(idx, val, hops=hops, thr=thr) if self.mode in ("full", "banc", "mcns") \
                 else self._forward_pure_mb(idx, val, hops=hops, thr=thr)
         else:
-            h = self._forward_full(idx, val, hops=hops) if self.mode in ("full", "banc") else self._forward_mb(idx, val)
+            h = self._forward_full(idx, val, hops=hops) if self.mode in ("full", "banc", "mcns") else self._forward_mb(idx, val)
         kcs = h[self.KC] if (pure or spike) else h[self.KC].mean(axis=1)
         m = kcs >= np.sort(kcs)[-max(1, int(len(kcs)*0.05))]
         ks = (kcs*m).astype(np.float32)
@@ -1093,7 +1137,7 @@ class FlyBrainAPI:
             "ALPN_mean": float(h[self.ALPN].mean()) if len(self.ALPN) else 0.0,
             "EI_sum": float((self.wM*self.sign).sum()),
         }
-        if self.mode in ("full", "banc"):
+        if self.mode in ("full", "banc", "mcns"):
             out["VIS_mean"] = float(h[self.VIS].mean()) if len(self.VIS) else 0.0
             if len(getattr(self, "ALPN_L", [])) and len(getattr(self, "ALPN_R", [])) \
                     and len(self.ALPN):
@@ -1119,7 +1163,7 @@ class FlyBrainAPI:
             if len(self.DESC_L) and len(self.DESC_R):
                 out["DN_L"] = float(h[self.DESC_L].mean()); out["DN_R"] = float(h[self.DESC_R].mean())
                 out["turn"] = float(out["DN_L"]-out["DN_R"])  # >0 turn left (convention)
-            if self.mode == "banc":
+            if self.mode in ("banc", "mcns"):
                 # intact brain->VNC chain, one animal: direct motor readouts
                 _mm = getattr(self, "MOTOR", np.zeros(0, np.int32))
                 out["BANC_motor"] = float(h[_mm].mean()) if len(_mm) else 0.0
@@ -1198,7 +1242,7 @@ class FlyBrainAPI:
             self.wM[:] = (self.wM - rate * (self.wM - self.wM0)).astype(np.float32)
         cur = np.zeros(len(self.MBON)); np.add.at(cur, self.km_mi, self.wM[self.km_mask].astype(float))
         self.ref_mb[:] = cur
-        if self.mode in ("full", "banc"):
+        if self.mode in ("full", "banc", "mcns"):
             cur = np.zeros(self.N); np.add.at(cur, self.post, self.wM.astype(float))
             self.ref_in[:] = cur
         return {"episodes": episodes, "rate": rate}
@@ -1223,7 +1267,7 @@ class FlyBrainAPI:
                 [self.km_mask, np.zeros(len(self.pre) - n0, dtype=bool)])
         if getattr(self, "_fan", None) is not None and len(self._fan) < self.N:
             self._fan = np.concatenate([self._fan, np.ones(self.N - len(self._fan), np.float32)])
-        if self.mode in ("full", "banc"):
+        if self.mode in ("full", "banc", "mcns"):
             self.elig = np.concatenate([self.elig, np.zeros(len(self.pre) - n0, np.float32)])
             fan = np.zeros(self.N, dtype=np.float64)
             np.add.at(fan, self.post[n0:], np.abs(pw).astype(float))
@@ -1492,7 +1536,7 @@ class FlyBrainAPI:
         Practical doses: mb 2-4 rounds per circumstance; full ~5-10 rounds.
         hops=None -> default from set_hops()."""
         if hops is None:
-            hops = int(getattr(self, "_hops", 2 if self.mode in ("full", "banc") else 1))
+            hops = int(getattr(self, "_hops", 2 if self.mode in ("full", "banc", "mcns") else 1))
         else:
             hops = int(hops)
         outs = getattr(self, "_x_outputs", {})
@@ -1513,11 +1557,11 @@ class FlyBrainAPI:
                 h = self._forward_spike(idx, val)
                 a = h.astype(np.float64)
             elif pure:
-                h = self._forward_pure(idx, val, hops=hops, thr=thr) if self.mode in ("full", "banc") \
+                h = self._forward_pure(idx, val, hops=hops, thr=thr) if self.mode in ("full", "banc", "mcns") \
                     else self._forward_pure_mb(idx, val, hops=hops, thr=thr)
                 a = h.astype(np.float64)
             else:
-                h = self._forward_full(idx, val, hops=hops) if self.mode in ("full", "banc") else self._forward_mb(idx, val)
+                h = self._forward_full(idx, val, hops=hops) if self.mode in ("full", "banc", "mcns") else self._forward_mb(idx, val)
                 a = h.mean(axis=1).astype(np.float64)
             # sparse KC code drives the update (same act as the readout).
             try:
@@ -1616,7 +1660,7 @@ class FlyBrainAPI:
         No codes: legacy slab. gated=False: always legacy slab.
         hops=None -> default from set_hops() (full 2, mb 1)."""
         if hops is None:
-            hops = int(getattr(self, "_hops", 2 if self.mode in ("full", "banc") else 1))
+            hops = int(getattr(self, "_hops", 2 if self.mode in ("full", "banc", "mcns") else 1))
         else:
             hops = int(hops)
         idx, val, _ = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
@@ -1626,14 +1670,14 @@ class FlyBrainAPI:
             h = self._forward_spike(idx, val)
             kcs = h[self.KC]
         elif pure:
-            h = self._forward_pure(idx, val, hops=hops, thr=thr) if self.mode in ("full", "banc") \
+            h = self._forward_pure(idx, val, hops=hops, thr=thr) if self.mode in ("full", "banc", "mcns") \
                 else self._forward_pure_mb(idx, val, hops=hops, thr=thr)
             kcs = h[self.KC]
         else:
-            h = self._forward_full(idx, val) if self.mode in ("full", "banc") else self._forward_mb(idx, val)
+            h = self._forward_full(idx, val) if self.mode in ("full", "banc", "mcns") else self._forward_mb(idx, val)
             kcs = h[self.KC].mean(axis=1)
         m = kcs >= np.sort(kcs)[-max(1, int(len(kcs)*0.05))]
-        if self.mode in ("full", "banc") and reward != 0:
+        if self.mode in ("full", "banc", "mcns") and reward != 0:
             a = h if pure else h.mean(axis=1).astype(np.float32)
             for s in range(0, self.E, self.CH):
                 e = slice(s, min(s+self.CH, self.E))
