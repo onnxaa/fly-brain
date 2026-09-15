@@ -9,6 +9,7 @@ topology/Dale, protocol-only learning) — 16× faster load, 8× faster train,
 ```bash
 python3 export_flat.py     # mb/full edges + roles + fan + DoOR + taste -> ../fly_cpp/data/
 python3 export_spike.py    # APL/graded sets + mb APL extension -> ../fly_cpp/data/
+python3 export_vnc.py      # real VNC (MANC) + DESC type-bridge -> ../fly_cpp/data/
 ```
 
 `fly_cpp/data/*.i32/*.f32` are git-ignored (182M). Run the two scripts above
@@ -43,6 +44,12 @@ Toolchain: g++ 15.2, cmake 3.31, OpenMP. RAM ~1.5G for full forward.
 ./build/fly --data <DATA> heatbox [--sched hb_sched.bin] [--steps 100] [--test 40]
 ./build/fly --data <DATA> heatbox_ctl [--sched hb_sched.bin] [--steps 100] [--test 40]
 ./build/fly --data <DATA> spaced
+```
+
+```bash
+./build/fly --data <DATA> --mode full --vnc --mech-bin mech.f32 step
+# mech.f32 = float32 vector over full MECH pool (export order); prints
+# VNC_desc/VNC_motor/legL/legR/imb/wing/neck (bit-parity vs Python enable_vnc)
 ```
 
 Weights: C++ uses raw float32 `.wbin` (save/load_wbin), not Python `.npz`.

@@ -129,6 +129,94 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         }
     } catch (...) {}
     try { clock_M = L32("clock_M"); clock_E = L32("clock_E"); } catch (...) {}
+    // real VNC (MANC): data present => has_vnc_data; runs only after enable_vnc()
+    try {
+        vpre = L32("vnc_pre"); vpost = L32("vnc_post");
+        std::vector<float> vws = LF("vnc_w");
+        vE = (int64_t)vpre.size();
+        vwM.resize((size_t)vE); vsign.resize((size_t)vE);
+        for (int64_t i = 0; i < vE; i++) {
+            float x = vws[i];
+            vsign[(size_t)i] = (x >= 0) ? 1.0f : -1.0f;
+            if (x == 0) vsign[(size_t)i] = 1.0f;
+            vwM[(size_t)i] = std::fabs(x);
+        }
+        vfan = LF("vnc_fan");
+        vN = (int)vfan.size();
+        vdesc = L32("vnc_desc"); vmotor = L32("vnc_motor_all");
+        vlegL = L32("vnc_leg_L"); vlegR = L32("vnc_leg_R");
+        vwingL = L32("vnc_wing_L"); vwingR = L32("vnc_wing_R");
+        vneck = L32("vnc_neck");
+        std::vector<int32_t> bb = L32("vnc_bridge_b"), bv = L32("vnc_bridge_v");
+        vbridge.assign((size_t)vN, {});
+        for (size_t i = 0; i < bb.size() && i < bv.size(); i++) {
+            int32_t v = bv[i];
+            if (v >= 0 && v < vN) vbridge[(size_t)v].push_back(bb[i]);
+        }
+        // CSR-direct: edges stably sorted by post (export_vnc.py) => counting head
+        vhead.assign((size_t)vN + 1, 0);
+        for (int64_t i = 0; i < vE; i++) {
+            int32_t q = vpost[(size_t)i];
+            if (q >= 0 && q < vN) vhead[(size_t)q + 1]++;
+        }
+        for (int i = 0; i < vN; i++) vhead[(size_t)i + 1] += vhead[(size_t)i];
+        vcsr_pre.assign((size_t)vE, 0); vcsr_sw.assign((size_t)vE, 0.0f);
+        std::vector<int64_t> cur(vhead.begin(), vhead.begin() + vN);
+        for (int64_t i = 0; i < vE; i++) {
+            int32_t q = vpost[(size_t)i];
+            if (q < 0 || q >= vN) continue;
+            int64_t s = cur[(size_t)q]++;
+            vcsr_pre[(size_t)s] = vpre[(size_t)i];
+            vcsr_sw[(size_t)s] = vwM[(size_t)i] * vsign[(size_t)i];
+        }
+        has_vnc_data = true;
+    } catch (...) { has_vnc_data = false; }
+}
+
+void FlyBrain::enable_vnc(float bridge_w) {
+    if (!has_vnc_data) throw std::runtime_error("no VNC data (run export_vnc.py)");
+    if (mode != "full") throw std::runtime_error("VNC needs mode='full'");
+    vnc_on = true;
+    vbridge_w = bridge_w;
+    x_log.push_back({"enable_vnc", "", "manc121"});
+}
+
+std::vector<float> FlyBrain::forward_vnc(const std::vector<float>& h_brain) {
+    int n = vN;
+    if ((int)v_base.size() < n) {
+        v_base.assign((size_t)n, 0.0f);
+        v_a.assign((size_t)n, 0.0f);
+        v_agg.assign((size_t)n, 0.0f);
+    }
+    std::fill(v_base.begin(), v_base.begin() + n, 0.0f);
+    if (vbridge_w != 0.0f) {
+        for (int32_t v : vdesc) {
+            if (v < 0 || v >= n) continue;
+            const auto& bl = vbridge[(size_t)v];
+            if (bl.empty()) continue;
+            double s = 0;
+            for (int32_t b : bl)
+                if (b >= 0 && (size_t)b < h_brain.size()) s += h_brain[(size_t)b];
+            float m = (float)(s / bl.size()) * vbridge_w;
+            if (m > 0) v_base[(size_t)v] = m;
+        }
+    }
+    v_a = v_base;
+    for (int h = 0; h < 2; h++) {
+        #pragma omp parallel for schedule(static) if(n > 10000)
+        for (int q = 0; q < n; q++) {
+            float s = 0;
+            for (int64_t e = vhead[(size_t)q]; e < vhead[(size_t)q + 1]; e++)
+                s += v_a[(size_t)vcsr_pre[(size_t)e]] * vcsr_sw[(size_t)e];
+            v_agg[(size_t)q] = s;
+        }
+        #pragma omp parallel for schedule(static) if(n > 10000)
+        for (int q = 0; q < n; q++) {
+            float x = v_agg[(size_t)q] / (vfan[(size_t)q] + 1e-6f);
+            v_a[(size_t)q] = (x > 0 ? x : 0.0f) + v_base[(size_t)q];
+        }
+    }
+    return v_a;
 }
 
 void FlyBrain::build_km() {
@@ -626,6 +714,22 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
         if(!DESC_L.empty()&&!DESC_R.empty()){
             o.DN_L=mean_pool(DESC_L); o.DN_R=mean_pool(DESC_R);
             o.turn=o.DN_L-o.DN_R; o.has_dn=true;
+        }
+        if (vnc_on && has_vnc_data) {
+            std::vector<float> hv = forward_vnc(h);
+            auto vmean = [&](const std::vector<int32_t>& pool)->float {
+                if (pool.empty()) return 0;
+                double s = 0; for (auto id : pool) if (id >= 0 && id < vN) s += hv[(size_t)id];
+                return (float)(s / pool.size());
+            };
+            o.VNC_desc_mean = vmean(vdesc);
+            o.VNC_motor = vmean(vmotor);
+            o.VNC_leg_L = vmean(vlegL); o.VNC_leg_R = vmean(vlegR);
+            o.VNC_leg_imb = o.VNC_leg_L - o.VNC_leg_R;
+            o.VNC_wing_L = vmean(vwingL); o.VNC_wing_R = vmean(vwingR);
+            o.VNC_wing = (o.VNC_wing_L + o.VNC_wing_R) * 0.5f;
+            o.VNC_neck = vmean(vneck);
+            o.has_vnc = true;
         }
         if(!MEv.empty()){o.ME_mean=mean_pool(MEv);o.has_me=true;}
         if(hm){o.motion=mo;o.has_motion=true;}

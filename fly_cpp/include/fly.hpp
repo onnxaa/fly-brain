@@ -34,6 +34,11 @@ struct Out {
     float ORN_L = 0, ORN_R = 0, MECH_mean = 0, MECH_L = 0, MECH_R = 0;
     float ORN_mean = 0, motor_pref = 0, DN_L = 0, DN_R = 0, turn = 0, ME_mean = 0;
     bool has_lateral = false, has_dn = false, has_me = false;
+    // real VNC (MANC) readouts, valid when has_vnc
+    float VNC_desc_mean = 0, VNC_motor = 0;
+    float VNC_leg_L = 0, VNC_leg_R = 0, VNC_leg_imb = 0;
+    float VNC_wing_L = 0, VNC_wing_R = 0, VNC_wing = 0, VNC_neck = 0;
+    bool has_vnc = false;
     std::vector<float> EFFERENT;
     std::map<std::string, float> motion; bool has_motion = false;
     std::map<std::string, float> X;
@@ -127,6 +132,19 @@ public:
     std::vector<float> sp_k2a_w, sp_a2k_w;
     // vision motion memory
     std::vector<float> last_small; bool has_last_small = false;
+    // real VNC (MANC v1.2.1, opt-in via enable_vnc; full mode only).
+    // Frozen topology/Dale from MANC; brain->VNC bridge is X-zone protocol.
+    bool has_vnc_data = false, vnc_on = false;
+    int vN = 0; int64_t vE = 0;
+    std::vector<int32_t> vpre, vpost;
+    std::vector<float> vwM, vsign, vfan;
+    std::vector<int64_t> vhead;
+    std::vector<int32_t> vcsr_pre;
+    std::vector<float> vcsr_sw;
+    std::vector<int32_t> vdesc, vmotor, vlegL, vlegR, vwingL, vwingR, vneck;
+    std::vector<std::vector<int32_t>> vbridge; // per-VNC-idx brain idxs
+    float vbridge_w = 1.0f;
+    std::vector<float> v_base, v_a, v_agg;
 
     FlyBrain() = default;
     FlyBrain(const std::string& m, const std::string& path, int seed = 1);
@@ -152,6 +170,8 @@ public:
     void enable_clock(float amp = 0.5f);
     std::map<std::string, double> tick_clock(double hours = 1.0, float light = -1.0f);
     void enable_scaling(); // loads exported fan (formula-equivalent)
+    void enable_vnc(float bridge_w = 1.0f); // load MANC VNC + type bridge
+    std::vector<float> forward_vnc(const std::vector<float>& h_brain);
     void calibrate(const std::vector<float>& image = {}, int H = 0, int Wd = 0);
 
     // core

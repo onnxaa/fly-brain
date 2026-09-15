@@ -8,7 +8,7 @@
 #include <string>
 
 static void usage() {
-    std::printf("usage: fly --data DIR --mode mb|full [--seed N] <cmd> [opts]\n"
+    std::printf("usage: fly --data DIR --mode mb|full [--seed N] [--vnc] <cmd> [opts]\n"
                 "  info | step | train\n"
                 "  tmaze [--w-out F] | train_fix [--w-out F]\n"
                 "  buridan [--w-in F] [--steps N] [--n-switch K]\n"
@@ -25,6 +25,8 @@ int main(int argc, char** argv) {
     int hops = -1;
     float thr = 0;
     std::string act, w_in, w_out, alpn_bin, sched = "";
+    std::string mech_bin;
+    bool use_vnc = false;
     int steps = -1, test_n = -1, n_switch = -1;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -36,6 +38,8 @@ int main(int argc, char** argv) {
         else if (a == "--w-in") need(w_in);
         else if (a == "--w-out") need(w_out);
         else if (a == "--alpn-bin") need(alpn_bin);
+        else if (a == "--mech-bin") need(mech_bin);
+        else if (a == "--vnc") use_vnc = true;
         else if (a == "--sched") need(sched);
         else if (a == "--reward") reward = std::stof(argv[++i]);
         else if (a == "--punish") punish = std::stof(argv[++i]);
@@ -85,6 +89,7 @@ int main(int argc, char** argv) {
 
     fly::FlyBrain b(mode, data);
     b.enable_scaling();
+    if (use_vnc) b.enable_vnc();
     if (!act.empty()) b.set_activation(act);
     if (!w_in.empty()) b.load_wbin(w_in);
     if (cmd == "info") {
@@ -99,12 +104,22 @@ int main(int argc, char** argv) {
         s.has_alpn = true;
         s.alpn = fly::load_f32(alpn_bin, n);
     }
+    if (!mech_bin.empty()) {
+        size_t n = fly::file_size(mech_bin) / 4;
+        s.has_mech = true;
+        s.mech = fly::load_f32(mech_bin, n);
+    }
     if (cmd == "step") {
         fly::Out o = b.step(s, hops, thr);
         std::printf("MB_pref=%+.4f MB_app=%+.4f MB_avo=%+.4f KC_active=%d "
                     "DAN_pam=%+.4f DAN_ppl=%+.4f ALPN_mean=%+.4f EI_sum=%.1f\n",
                     o.MB_pref, o.MB_app, o.MB_avo, o.KC_active, o.DAN_pam, o.DAN_ppl,
                     o.ALPN_mean, o.EI_sum);
+        if (o.has_vnc)
+            std::printf("VNC_desc=%+.5f VNC_motor=%+.5f legL=%+.5f legR=%+.5f imb=%+.5f "
+                        "wing=%+.5f neck=%+.5f\n",
+                        o.VNC_desc_mean, o.VNC_motor, o.VNC_leg_L, o.VNC_leg_R,
+                        o.VNC_leg_imb, o.VNC_wing, o.VNC_neck);
         return 0;
     }
     if (cmd == "train") {
