@@ -16,7 +16,7 @@ int64_t FlyBrain::x_add_edge(int32_t a, int32_t b, float w, float dale) {
     pre.push_back(a); post.push_back(b);
     wM.push_back(w); sign.push_back(dale); wM0.push_back(w);
     E++;
-    if (mode == "full") {
+    if ((mode == "full" || mode == "banc" || mode == "mcns")) {
         elig.push_back(0.0f);
         if ((int)fan.size() < N) fan.resize(N, 1.0f);
         if (b >= 0 && b < N) fan[b] += std::fabs(w);
@@ -69,13 +69,13 @@ std::vector<int32_t> FlyBrain::x_add_output(const std::string& name, int n,
         pre.push_back(pa[i]); post.push_back(pb[i]);
         wM.push_back(pw[i]); sign.push_back(1.0f); wM0.push_back(pw[i]);
         E++;
-        if (mode == "full") elig.push_back(0.0f);
+        if ((mode == "full" || mode == "banc" || mode == "mcns")) elig.push_back(0.0f);
     }
     size_t N0 = (size_t)N - (size_t)n;
     fan.resize(N, 0.0f);
     // New sinks: fan = sum|incoming| (fresh enable_scaling semantics 1:1);
     // undriven -> 1.0 like Python fan[fan==0]=1.0.
-    if (mode == "full") {
+    if ((mode == "full" || mode == "banc" || mode == "mcns")) {
         if ((int)ref_in.size() < N) ref_in.resize(N, 0.0f);
         for (size_t i = 0; i < pa.size(); i++) {
             fan[pb[i]] += std::fabs(pw[i]);

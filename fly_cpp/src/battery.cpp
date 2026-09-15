@@ -527,7 +527,7 @@ void bench(const std::string& data, const std::string& mode, int steps) {
     b.enable_scaling();
     auto t2 = clk::now();
     Stim s;
-    if (mode == "full") { s.has_odor_str = true; s.odor_str = "geosmin"; }
+    if (mode == "full" || mode == "banc" || mode == "mcns") { s.has_odor_str = true; s.odor_str = "geosmin"; }
     else { s.has_odor_str = true; s.odor_str = "A"; }
     // warmup (page in, thread pool spin-up)
     b.step(s);

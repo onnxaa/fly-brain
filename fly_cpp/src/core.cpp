@@ -44,7 +44,10 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
     auto LF = [&](const std::string& n) {
         return load_f32(path + "/" + n + ".f32", file_size(path + "/" + n + ".f32") / 4);
     };
-    std::string p = (mode == "mb") ? "mb" : "full";
+    std::string p = (mode == "mb") ? "mb" : (mode == "full") ? "full" :
+                    (mode == "banc") ? "banc" : "male";
+    if (mode != "mb" && mode != "full" && mode != "banc" && mode != "mcns")
+        throw std::runtime_error("mode must be mb|full|banc|mcns");
     pre = L32(p + "_pre"); post = L32(p + "_post");
     std::vector<float> ws = LF(p + "_w");
     E = (int64_t)pre.size();
@@ -68,7 +71,7 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         km_is_avoid = load_u8(path + "/mb_km_is_avoid.u8",
                               file_size(path + "/mb_km_is_avoid.u8"));
         spike_ainc = 0.0f; spike_adapt = 1.0f; spike_burn = 0;
-    } else {
+    } else if (mode == "full") {
         KC = need("full_KC"); MBON = need("full_MBON");
         approach = need("full_approach"); avoid = need("full_avoid");
         dan_pam = need("full_dan_pam"); dan_ppl = need("full_dan_ppl");
@@ -82,6 +85,25 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         R = need("full_R"); VIS_eye = need("full_VIS_eye");
         R_cx = LF("full_R_cx"); R_cy = LF("full_R_cy");
         N = 138639;
+        hops = 2;
+        elig.assign(E, 0.0f);
+        ref_in.assign(N, 0.0f);
+        for (int64_t e = 0; e < E; e++) ref_in[post[(size_t)e]] += wM[(size_t)e];
+        spike_ainc = 4.0f; spike_adapt = 0.2f; spike_burn = 50;
+        build_km();
+    } else {
+        // whole-CNS (banc/mcns): files prefixed banc_* / male_*
+        KC = need(p+"_KC"); MBON = need(p+"_MBON");
+        approach = need(p+"_approach"); avoid = need(p+"_avoid");
+        dan_pam = need(p+"_dan_pam"); dan_ppl = need(p+"_dan_ppl");
+        ORN = need(p+"_ORN"); MECH = need(p+"_MECH");
+        DESC_L = need(p+"_DESC_L"); DESC_R = need(p+"_DESC_R");
+        ORN_L = need(p+"_ORN_L"); ORN_R = need(p+"_ORN_R");
+        MECH_L = need(p+"_MECH_L"); MECH_R = need(p+"_MECH_R");
+        MOT = need(p+"_MOTOR"); MOT_legL = need(p+"_leg_L");
+        MOT_legR = need(p+"_leg_R"); MOT_wing = need(p+"_wing");
+        MOT_neck = need(p+"_neck");
+        N = (int)LF(p + "_fan").size();
         hops = 2;
         elig.assign(E, 0.0f);
         ref_in.assign(N, 0.0f);
@@ -103,11 +125,12 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
     for (size_t i = 0; i < km_e.size(); i++) ref_mb[km_mi[i]] += wM[(size_t)km_e[i]];
     build_csr();
     ensure_readout_cache();
-    // door odors (full)
+    // door odors (full: door_*; banc/mcns: prefixed)
     try {
         const char* doors[6] = {"geosmin","co2","hexanone3","methyl_salicylate","butanedione","ethyl_hexanoate"};
+        std::string dp = (mode == "full") ? "door" : p + "_door";
         for (auto d : doors) {
-            std::string b = std::string("door_") + d;
+            std::string b = dp + "_" + d;
             door_idx[d] = L32(b + "_idx");
             door_val[d] = LF(b + "_val");
         }
@@ -418,7 +441,8 @@ std::pair<bool, std::map<std::string, float>> FlyBrain::sleep_tick(float kc_frac
 
 void FlyBrain::enable_scaling() {
     try {
-        std::string n = (mode == "mb") ? "mb_fan" : "full_fan";
+        std::string n = (mode == "mb") ? "mb_fan" : (mode == "full") ? "full_fan" :
+                        (mode == "banc") ? "banc_fan" : "male_fan";
         std::string fp = datapath + "/" + n + ".f32";
         fan = load_f32(fp, file_size(fp) / 4);
     } catch (...) {}
@@ -463,7 +487,7 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
             if (it == taste_idx.end()) throw std::runtime_error("missing taste table");
             for (auto id : it->second) { idx.push_back(id); val.push_back(2.0f); }
         } else if (door_idx.count(o)) {
-            if (mode != "full") throw std::runtime_error("DoOR requires mode='full'");
+            if (mode != "full" && mode != "banc" && mode != "mcns") throw std::runtime_error("DoOR requires a CNS mode");
             auto& di = door_idx[o]; auto& dv = door_val[o];
             for (size_t i = 0; i < di.size(); i++) { idx.push_back(di[i]); val.push_back(dv[i]*2.0f); }
         } else if (o=="A"||o=="B") {
@@ -471,14 +495,14 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
                 auto& sel = (o=="A"?odorA:odorB);
                 for (auto id : sel) { idx.push_back(id); val.push_back(2.0f); }
             } else {
-                const std::vector<int32_t>& pool = (mode=="full"?ORN:ALPN);
+                const std::vector<int32_t>& pool = (!ORN.empty()?ORN:ALPN);
                 size_t half = pool.size()/2;
                 if (o=="A") { for (size_t i=0;i<half;i++){idx.push_back(pool[i]);val.push_back(2.0f);} }
                 else { for (size_t i=half;i<pool.size();i++){idx.push_back(pool[i]);val.push_back(2.0f);} }
             }
         } else {
             // unknown string -> B-half (matches Python fallback sel=o[half:])
-            const std::vector<int32_t>& pool = (mode=="full"?ORN:ALPN);
+            const std::vector<int32_t>& pool = (!ORN.empty()?ORN:ALPN);
             size_t half = pool.size()/2;
             for (size_t i=half;i<pool.size();i++){idx.push_back(pool[i]);val.push_back(2.0f);}
         }
@@ -502,8 +526,8 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
             if (ss.count(di[i])) { idx.push_back(di[i]); val.push_back(dv[i]*2.0f); }
     };
     if (!s.odor_left_str.empty() || !s.odor_right_str.empty() || s.has_odor_left || s.has_odor_right) {
-        if (mode != "full" || ORN_L.empty())
-            throw std::runtime_error("lateral odors require mode='full' with ORN_L/R");
+        if (ORN_L.empty())
+            throw std::runtime_error("lateral odors require ORN_L/R pools");
         if (!s.odor_left_str.empty()) lateral_door(s.odor_left_str, ORN_L);
         if (!s.odor_right_str.empty()) lateral_door(s.odor_right_str, ORN_R);
         if (s.has_odor_left && !s.odor_left.empty()) {
@@ -520,8 +544,8 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
         for (size_t i = 0; i < n; i++) { idx.push_back(MECH[i]); val.push_back(s.mech[i]*2.0f); }
     }
     if ((s.has_mech_left && !s.mech_left.empty()) || (s.has_mech_right && !s.mech_right.empty())) {
-        if (mode != "full" || MECH_L.empty())
-            throw std::runtime_error("lateral mech requires mode='full' with MECH_L/R");
+        if (MECH_L.empty())
+            throw std::runtime_error("lateral mech requires MECH_L/R pools");
         if (s.has_mech_left) {
             size_t n = std::min(MECH_L.size(), s.mech_left.size());
             for (size_t i=0;i<n;i++){idx.push_back(MECH_L[i]);val.push_back(s.mech_left[i]*2.0f);}
@@ -692,7 +716,7 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
     o.DAN_pam = mean_pool(dan_pam); o.DAN_ppl = mean_pool(dan_ppl);
     o.ALPN_mean = mean_pool(ALPN);
     o.EI_sum = EI_sum();
-    if (mode=="full") {
+    if (mode=="full" || mode=="banc" || mode=="mcns") {
         o.VIS_mean = mean_pool(VIS);
         if (!ALPN_L.empty()&&!ALPN_R.empty()&&!ALPN.empty()){
             o.ALPN_L=mean_pool(ALPN_L); o.ALPN_R=mean_pool(ALPN_R);
@@ -714,6 +738,13 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
         if(!DESC_L.empty()&&!DESC_R.empty()){
             o.DN_L=mean_pool(DESC_L); o.DN_R=mean_pool(DESC_R);
             o.turn=o.DN_L-o.DN_R; o.has_dn=true;
+        }
+        if(!MOT.empty()){
+            o.BANC_motor=mean_pool(MOT);
+            o.BANC_leg_L=mean_pool(MOT_legL); o.BANC_leg_R=mean_pool(MOT_legR);
+            o.BANC_leg_imb=o.BANC_leg_L-o.BANC_leg_R;
+            o.BANC_wing=mean_pool(MOT_wing); o.BANC_neck=mean_pool(MOT_neck);
+            o.has_bcmotor=true;
         }
         if (vnc_on && has_vnc_data) {
             std::vector<float> hv = forward_vnc(h);
@@ -786,7 +817,7 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
     float kt=sk[sk.size()-kk];
     std::vector<char> m(nKC,0);
     for(size_t i=0;i<nKC;i++) if(kcs[i]>=kt) m[i]=1;
-    if (mode=="full" && reward!=0) {
+    if ((mode=="full"||mode=="banc"||mode=="mcns") && reward!=0) {
         // fused eligibility + weight update (was: two passes over E)
         int64_t nE = E;
         #pragma omp parallel for schedule(static) if(nE>1000000)
@@ -894,7 +925,7 @@ void FlyBrain::sleep(int episodes, float rate) {
     std::vector<float> cur(MBON.size(),0.0f);
     for(size_t j=0;j<km_e.size();j++) cur[(size_t)km_mi[j]]+=wM[(size_t)km_e[j]];
     ref_mb=cur;
-    if(mode=="full"){
+    if(mode=="full"||mode=="banc"||mode=="mcns"){
         if((int)ref_in.size()<N) ref_in.assign((size_t)N,0.0f);
         std::fill(ref_in.begin(), ref_in.end(), 0.0f);
         for(size_t e=0;e<(size_t)E;e++) ref_in[(size_t)post[e]]+=wM[e];

@@ -34,6 +34,10 @@ struct Out {
     float ORN_L = 0, ORN_R = 0, MECH_mean = 0, MECH_L = 0, MECH_R = 0;
     float ORN_mean = 0, motor_pref = 0, DN_L = 0, DN_R = 0, turn = 0, ME_mean = 0;
     bool has_lateral = false, has_dn = false, has_me = false;
+    // whole-CNS (banc/mcns) intact motor readouts, valid when has_bcmotor
+    float BANC_motor = 0, BANC_leg_L = 0, BANC_leg_R = 0, BANC_leg_imb = 0;
+    float BANC_wing = 0, BANC_neck = 0;
+    bool has_bcmotor = false;
     // real VNC (MANC) readouts, valid when has_vnc
     float VNC_desc_mean = 0, VNC_motor = 0;
     float VNC_leg_L = 0, VNC_leg_R = 0, VNC_leg_imb = 0;
@@ -81,6 +85,8 @@ public:
     std::vector<int32_t> ORN, MECH, VIS, ALPN, EFFERENT, DESC, MEv, LOv;
     std::vector<int32_t> ORN_L, ORN_R, ALPN_L, ALPN_R, MECH_L, MECH_R;
     std::vector<int32_t> DESC_L, DESC_R, R, VIS_eye;
+    // whole-CNS (banc/mcns) motor pools
+    std::vector<int32_t> MOT, MOT_legL, MOT_legR, MOT_wing, MOT_neck;
     std::vector<float> R_cx, R_cy;
     std::vector<int32_t> KC, MBON, DAN, approach, avoid, dan_pam, dan_ppl;
     std::vector<int32_t> clock_M, clock_E;

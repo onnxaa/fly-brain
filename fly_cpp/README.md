@@ -10,6 +10,7 @@ topology/Dale, protocol-only learning) — 16× faster load, 8× faster train,
 python3 export_flat.py     # mb/full edges + roles + fan + DoOR + taste -> ../fly_cpp/data/
 python3 export_spike.py    # APL/graded sets + mb APL extension -> ../fly_cpp/data/
 python3 export_vnc.py      # real VNC (MANC) + DESC type-bridge -> ../fly_cpp/data/
+python3 export_cns.py      # BANC (female) + MCNS (male) whole-CNS -> ../fly_cpp/data/
 ```
 
 `fly_cpp/data/*.i32/*.f32` are git-ignored (182M). Run the two scripts above
@@ -51,6 +52,21 @@ Toolchain: g++ 15.2, cmake 3.31, OpenMP. RAM ~1.5G for full forward.
 # mech.f32 = float32 vector over full MECH pool (export order); prints
 # VNC_desc/VNC_motor/legL/legR/imb/wing/neck (bit-parity vs Python enable_vnc)
 ```
+
+## Whole-CNS modes (banc/mcns, bit-parity vs Python)
+
+```bash
+./build/fly --data <DATA> --mode banc --odor geosmin step
+./build/fly --data <DATA> --mode mcns --odor geosmin step
+./build/fly --data <DATA> --mode mcns bench --steps 3
+```
+
+Prints `BANC_motor/legL/legR/imb/wing/neck` (intact brain→VNC chain, one
+animal). Measured (8 CPU): banc N=150k/E=11M load 0.9s step ~60ms train
+~130ms; mcns N=165k/E=25.6M load 2.4s step ~166ms train ~384ms.
+Parity: banc geosmin MB +0.0532, mcns −4.3808, motor pools — all identical
+to Python. Batteries (tmaze/...) stay full-mode (FAFB-validated); bench
+works in every mode.
 
 Weights: C++ uses raw float32 `.wbin` (save/load_wbin), not Python `.npz`.
 `buridan`/`habituate`/`detour` train inline when `--w-in` is missing.

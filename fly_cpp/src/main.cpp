@@ -8,7 +8,7 @@
 #include <string>
 
 static void usage() {
-    std::printf("usage: fly --data DIR --mode mb|full [--seed N] [--vnc] <cmd> [opts]\n"
+    std::printf("usage: fly --data DIR --mode mb|full|banc|mcns [--seed N] [--vnc] <cmd> [opts]\n"
                 "  info | step | train\n"
                 "  tmaze [--w-out F] | train_fix [--w-out F]\n"
                 "  buridan [--w-in F] [--steps N] [--n-switch K]\n"
@@ -120,6 +120,11 @@ int main(int argc, char** argv) {
                         "wing=%+.5f neck=%+.5f\n",
                         o.VNC_desc_mean, o.VNC_motor, o.VNC_leg_L, o.VNC_leg_R,
                         o.VNC_leg_imb, o.VNC_wing, o.VNC_neck);
+        if (o.has_bcmotor)
+            std::printf("BANC_motor=%+.5f legL=%+.5f legR=%+.5f imb=%+.5f "
+                        "wing=%+.5f neck=%+.5f\n",
+                        o.BANC_motor, o.BANC_leg_L, o.BANC_leg_R,
+                        o.BANC_leg_imb, o.BANC_wing, o.BANC_neck);
         return 0;
     }
     if (cmd == "train") {
