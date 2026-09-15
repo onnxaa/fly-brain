@@ -292,7 +292,8 @@ class FlyBrainAPI:
         return self._auto_sleep
 
     def enable_clock(self, amp=0.5):
-        """Wlacza sztuczny TTFL (clock.py, Goldbeter): 1 krok API = 1h.
+        """Wlacza sztuczny TTFL (clock.py, Goldbeter): czas plynie WYLACZNIE przez
+        tick_clock(hours) - kroki behawioralne zegara nie tykaja (rozdzial skal).
         Sygnal fazy idzie na WLASCIWE neurony: M (s-LNv/l-LNv, poranne) vs
         E (LNd/DN1, wieczorne), bipolarnie +-amp. Bramka C snu przelacza sie
         ze swiatla na faze zegara (noc = wysoki P2/TIM)."""
@@ -309,8 +310,20 @@ class FlyBrainAPI:
         self._clock_E = np.array(sorted({f2i[int(r)] for r in e["root_id"]}), dtype=np.int32)
         self._clock = TTFL()
         self._clock_amp = float(amp)
-        self._clock_state = {"morning": 0.5, "night_frac": 0.5}
+        self._clock_state = {"morning": 0.5, "night_frac": 0.5, "night": False}
         return {"M": len(self._clock_M), "E": len(self._clock_E), "amp": amp}
+
+    def tick_clock(self, hours=1.0, light=None):
+        """Przesuwa zegar o hours h (CALOSC czasu dobowego; kroki behawioralne go nie tykaja).
+        light=None: bierze biezacy _ambient; wynik: faza + drive M/E odswiezony przy next encode."""
+        if getattr(self, "_clock", None) is None:
+            raise ValueError("najpierw enable_clock()")
+        if light is None:
+            light = self._ambient
+        n = max(1, int(round(hours)))
+        for _ in range(n):
+            self._clock_state = self._clock.step(light)
+        return dict(self._clock_state)
 
     def _sleep_tick(self, kc_frac):
         """Aktualizacja S i przejscia sen/czuwanie. Zwraca (asleep, info)."""
@@ -466,8 +479,8 @@ class FlyBrainAPI:
 
     def step(self, image=None, odor=None, mech=None, alpn=None, hops=2, pure=None, thr=0.0,
              odor_left=None, odor_right=None, mech_left=None, mech_right=None):
-        if getattr(self, "_clock", None) is not None:
-            self._clock_state = self._clock.step(self._ambient)
+        # UWAGA skale czasu: krok = 1 trial behawioralny (sekundy-minuty). Zegar tyka
+        # WYLACZNIE przez tick_clock() - inaczej mob 10Hz przekrecilby dobe w 2s.
         idx, val, info = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
                                      odor_left=odor_left, odor_right=odor_right,
                                      mech_left=mech_left, mech_right=mech_right)

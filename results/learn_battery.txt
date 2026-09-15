@@ -116,3 +116,6 @@ DAN CHRONIACY (gated=True, 2026-09-15):
  v2: depresja wazona unikalnoscia KC vs kody (x_remember): shared x1.0, unikalne x0.85.
  Bez kodow: dokladnie legacy slab (E1 t3 +2.61 = +2.61).
  konflikt ethyl/hex: +1.31->+1.54 (117% zachowane) vs slab 55% vs neurogeneza 16%.
+
+SKALE CZASU (2026-09-15): zegar tyka WYLACZNIE tick_clock(hours); kroki to triale.
+Walidacja: 20 krokow bez tickow clock.t=0; 2 doby LD -> sen w nocach (2 bouty). README.md dodane.
