@@ -602,34 +602,46 @@ class FlyBrainAPI:
         cur = np.zeros(len(self.MBON)); np.add.at(cur, self.km_mi, self.wM[self.km_mask].astype(float))
         self.ref_mb = cur
 
-    def x_grow_kc(self, n=100, seed=0, wscale=0.05, per_kc_in=6, per_kc_out=8, src_pool=None):
-        """Dodaje n pseudo-KC (ids N..N+n-1): wejscia z losowych ALPN (rozklad wag A->K
-        z danych x wscale), wyjscia na losowe MBON (rozklad K->M x wscale), znak +1.
-        src_pool: zawęzona pula presynaptyczna (np. ALPN aktywne dla celu) - neurogeneza
-        sterowana aktywnoscia; None = cale ALPN. Male wagi urodzeniowe = brak katastrofy;
-        train() je potem rusza (R-Hebb + DAN)."""
+    def x_grow_assoc(self, n=100, seed=0, wscale=0.05, per_in=6, per_out=8,
+                     src_pool=None, dst_pool=None, join_kc=True):
+        """OGOLNY wzrost asocjacyjny (dowolna modalnosc): nowe neurony z puli src_pool
+        (rozklad wag входа z danych x wscale) na dst_pool. join_kc=True dolacza je do
+        puli KC (odczyt MB + plastycznosc DAN); False = sama anatomia. Zwraca ids."""
         rng = np.random.default_rng(seed)
-        isA = np.isin(self.pre, self.ALPN) & np.isin(self.post, self.KC)
-        isKM = self.km_mask.copy()
-        dA, dM = self.wM[isA], self.wM[isKM]
         src = self.ALPN if src_pool is None else np.asarray(src_pool, dtype=np.int32)
+        dst = self.MBON if dst_pool is None else np.asarray(dst_pool, dtype=np.int32)
+        isS = np.isin(self.pre, src)
+        dS = self.wM[isS]
+        if len(dS) == 0:
+            dS = self.wM
+        isD = np.isin(self.post, dst)
+        dD = self.wM[isD & np.isin(self.pre, self.KC)]
+        if len(dD) == 0:
+            dD = self.wM[self.km_mask]
         new = np.arange(self.N, self.N + n, dtype=np.int32)
         pa, pb, pw = [], [], []
         for kk in new:
-            srcs = rng.choice(src, size=min(per_kc_in, len(src)), replace=False)
-            pa.extend(srcs); pb.extend([kk] * len(srcs))
-            pw.extend(rng.choice(dA, size=len(srcs)) * wscale)
-            dst = rng.choice(self.MBON, size=min(per_kc_out, len(self.MBON)), replace=False)
-            pa.extend([kk] * len(dst)); pb.extend(dst)
-            pw.extend(rng.choice(dM, size=len(dst)) * wscale)
+            s = rng.choice(src, size=min(per_in, len(src)), replace=False)
+            pa.extend(s); pb.extend([kk] * len(s))
+            pw.extend(rng.choice(dS, size=len(s)) * wscale)
+            dd = rng.choice(dst, size=min(per_out, len(dst)), replace=False)
+            pa.extend([kk] * len(dd)); pb.extend(dd)
+            pw.extend(rng.choice(dD, size=len(dd)) * wscale)
         self.N += n
-        self.KC = np.sort(np.concatenate([self.KC, new]))
+        if join_kc:
+            self.KC = np.sort(np.concatenate([self.KC, new]))
         n0 = self._x_edges(pa, pb, pw, np.ones(len(pw), np.float32))
-        self._x_rebuild_km()
+        if join_kc:
+            self._x_rebuild_km()
         self._x_log = getattr(self, "_x_log", [])
-        self._x_log.append({"op": "grow_kc", "n": int(n), "edges": len(pw), "wscale": wscale,
-                            "dale": "+1(cholinergiczne)", "i0": int(n0)})
+        self._x_log.append({"op": "grow_assoc", "n": int(n), "edges": len(pw), "wscale": wscale,
+                            "join_kc": bool(join_kc), "dale": "+1(cholinergiczne)", "i0": int(n0)})
         return new
+
+    def x_grow_kc(self, n=100, seed=0, wscale=0.05, per_kc_in=6, per_kc_out=8, src_pool=None):
+        """Pseudo-KC wechowe = x_grow_assoc(src=ALPN/bias, dst=MBON, join_kc). Wrapper wstecznie zgodny."""
+        return self.x_grow_assoc(n=n, seed=seed, wscale=wscale, per_in=per_kc_in,
+                                 per_out=per_kc_out, src_pool=src_pool, dst_pool=None, join_kc=True)
 
     def x_add_edge(self, a, b, w, dale=+1.0):
         """Pojedyncza krawedz (z ksiega)."""
@@ -669,10 +681,55 @@ class FlyBrainAPI:
         self._x_log.append({"op": "prune_kc", "dead": int(len(dead)), "of": int(len(ids))})
         return int(len(dead)), int(act.sum())
 
+    def x_code(self, odor):
+        """Top-k kod KC zapachu (zbior pozycji). Rejestr slownika w _x_codes."""
+        h = self._forward_pure(*self.encode(odor=odor)[:2], hops=2, thr=0.0)
+        kcs = h[self.KC]; k = max(1, int(len(kcs) * 0.05))
+        return set(np.argsort(kcs)[-k:].tolist())
+
+    def x_novelty(self, odor):
+        """1 - maks. overlap kodu z zapamietanymi (0=znany, 1=nowy)."""
+        reg = getattr(self, "_x_codes", {})
+        if not reg:
+            return 1.0
+        code = self.x_code(odor)
+        return 1.0 - max(len(code & v) / max(len(code), 1) for v in reg.values())
+
+    def x_remember(self, odor):
+        self._x_codes = getattr(self, "_x_codes", {})
+        self._x_codes[odor] = self.x_code(odor)
+        return len(self._x_codes[odor])
+
+    def x_neurogenesis(self, odor, n=500, seed=0, wscale=0.01, per_kc_in=4, ov_thr=0.05):
+        """Neurogeneza bramkowana interferencja: rosnie JESLI kod zapachu koliduje
+        (>ov_thr) z pamiecia PRZECIWNEJ walencji (ryzyko nadpisania). Nowi urodzeni
+        SELEKTYWNI: wejscia z ALPN aktywnych dla TEGO zapachu (pula z drive'u, nie
+        losowa). Zwraca dict(grew, overlap, novelty). Jak w biologii: nowosc + uzytecznosc."""
+        code = self.x_code(odor)
+        reg = getattr(self, "_x_codes", {})
+        ov = 0.0
+        for o, v in reg.items():
+            if o != odor:
+                ov = max(ov, len(code & v) / max(len(code), 1))
+        nov = 1.0 - max([len(code & v) / max(len(code), 1) for v in reg.values()] or [1.0])
+        if ov < ov_thr:
+            return {"grew": False, "overlap": round(ov, 3), "novelty": round(nov, 3)}
+        # pula ALPN aktywnych dla tego zapachu (z profilu DoORgado - selektywnosc urodzeniowa)
+        import os as _os
+        dd = np.load(f"{self.path}/door_odors.npz")
+        oi, ovv = dd[odor + "_idx"], np.abs(dd[odor + "_val"])
+        # ALPN: top po 1-hop sile z alpn_patterns
+        pat = np.load(f"{self.path}/alpn_patterns.npz")
+        sc = np.abs(pat[odor]); AG = pat["ALPN_glob"]
+        pool = np.array(AG[np.argsort(sc)[-100:]], dtype=np.int32)
+        new = self.x_grow_kc(n=n, seed=seed, wscale=wscale, per_kc_in=per_kc_in, src_pool=pool)
+        self._x_log.append({"op": "neurogenesis", "odor": odor, "n": int(n), "overlap": round(ov, 3)})
+        return {"grew": True, "overlap": round(ov, 3), "novelty": round(nov, 3), "n": int(n)}
+
     def x_report(self):
         """Ile dodano/wycieto + zalozenia. Zwraca dict, drukuje."""
         lg = getattr(self, "_x_log", [])
-        added = sum(e.get("edges", 1) for e in lg if e["op"] in ("grow_kc", "add_edge"))
+        added = sum(e.get("edges", 1) for e in lg if e["op"] in ("grow_kc", "grow_assoc", "add_edge"))
         cut = sum(1 for e in lg if e["op"] == "cut_edge")
         grown = sum(e.get("n", 0) for e in lg if e["op"] == "grow_kc")
         rep = {"new_neurons": grown, "added_edges": added, "cut_edges": cut,

@@ -99,3 +99,13 @@ WZROST 10k: bolus vs protokol (2026-09-15):
   d final +7.63 (97% pure!), overlap 9.1%, nowe w top-k 71.4% (los 65.9%)
  prune: 8764/10000 urodzonych nigdy nie weszlo do kodu (jak dorosla neurogeneza: nadprodukcja + ciec)
  dryf samego wzrostu splatany z treningiem miedzy transzami (celowo - konsolidacja); wydajnosc uczenia w pelni zachowana.
+
+WZROST CALOMOZOGOWY (x_grow_assoc, 2026-09-15):
+ refactor: x_grow_kc = wrapper na x_grow_assoc(src, dst, join_kc); src/dst dowolne pule.
+ DOTYK: sciezka MECH->KC istnieje (hop2: 213 KC) ale szepce (KCmax 2e-4, d=0.00 - pure NIC nie uczy).
+ wzrost MECH-aktywni->MBON: ws .1/.2/.3 -> nowe 100% top-k (stare milcza - hijack = koniecznosc, nie patologia),
+ d +0.76/+2.98, retencja po konflikcie 517%/366% (transfer, jak w wechu).
+ ZDOLNOSC: pure 0.00 vs grown +3..+11 - wzrost UMozLIWIA nowa modalnosc (proteza przez odczyt MB, nie integracja:
+ stare KC nic nie wnosza). Prawdziwa integracja wymaga grubszej anatomii MECH->MB.
+ WECH (konflikt ethyl/hex): neurogeneza selektywna 800 -> retencja 16% (pure 55%, bolus -22%):
+ wzrost nie chroni STARYCH wspoldzielonych wag - pomaga przyszlym, nie przeszlym pamieciom. Uczciwie odnotowane.
