@@ -127,5 +127,5 @@ checkpoints: `weights_registry.json`.
 
 No lens/ommatidial optics (point sample + Gaussian RF only); motion readout-only, not injected; no body/VNC (flight only via prosthesis); DN-turn at
 noise floor (steer via `MB_pref`/`turn_olf`); full spiking is NumPy-only
-(~100 s/500 ms, Brian OOMs); rate mode loses deep chains; no forgetting without
+(~100 s/500 ms); rate mode loses deep chains; no forgetting without
 sleep; molecular clock/TTFL outside data; DNa02 steering needs LAL drive.
