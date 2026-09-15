@@ -14,6 +14,7 @@ add_library(flycore
   src/clock.cpp
   src/xzone.cpp
   src/spike.cpp
+  src/battery.cpp
 )
 if(OpenMP_CXX_FOUND)
   target_link_libraries(flycore PUBLIC OpenMP::OpenMP_CXX)

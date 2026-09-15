@@ -71,15 +71,24 @@ std::vector<int32_t> FlyBrain::x_add_output(const std::string& name, int n,
         E++;
         if (mode == "full") elig.push_back(0.0f);
     }
-    fan.resize(N, 1.0f);
-    // (mb branch in Python leaves _fan short; C++ hardens with 1.0 — same
-    // value a fresh enable_scaling would give an un-driven node.)
+    size_t N0 = (size_t)N - (size_t)n;
+    fan.resize(N, 0.0f);
+    // New sinks: fan = sum|incoming| (fresh enable_scaling semantics 1:1);
+    // undriven -> 1.0 like Python fan[fan==0]=1.0.
     if (mode == "full") {
         if ((int)ref_in.size() < N) ref_in.resize(N, 0.0f);
         for (size_t i = 0; i < pa.size(); i++) {
             fan[pb[i]] += std::fabs(pw[i]);
             ref_in[pb[i]] += pw[i];
         }
+        for (size_t k = N0; k < (size_t)N; k++) if (fan[k] == 0.0f) fan[k] = 1.0f;
+    } else {
+        // mb: Python leaves _fan short / stale when scaling was enabled
+        // before growth (and rebuilds it when scaling runs after growth).
+        // C++ hardens without changing old entries: new nodes get
+        // sum|incoming| (or 1.0 if undriven), old entries untouched.
+        for (size_t i = 0; i < pa.size(); i++) fan[pb[i]] += std::fabs(pw[i]);
+        for (size_t k = N0; k < (size_t)N; k++) if (fan[k] == 0.0f) fan[k] = 1.0f;
     }
     XOut xo;
     xo.name = name; xo.ids = nw; xo.nn = n;
