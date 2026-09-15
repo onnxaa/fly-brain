@@ -125,6 +125,24 @@ corr 0.60–0.94. Acquisition d −5.65→+7.89; reversal crosses zero in 1–2 
 tropotaxis 0.20→0.90 all PASS. Full numbers: `results/*.txt`,
 checkpoints: `weights_registry.json`.
 
+## BANC (real female whole-CNS, one animal)
+
+`FlyBrainAPI(mode="banc")` runs the BANC v888 connectome (Bates/Phelps/Kim/Yang,
+Nature 2026): **150,808 proofread non-glia neurons / 11,036,557 edges**,
+brain + VNC in ONE female animal with intact neck connective — no cross-sex
+bridge. Frozen topology + Dale from BANC NT (ACh=+1, GABA/glutamate/histamine=-1,
+monoamines=+1 protocol). KC 4130 / MBON 102 (14,681 KC→MBON edges) / DAN split
+PAM/PPL1; valence approach 71/71 + avoid 30/25 ported from FAFB via `fafb_match`;
+DoOR 6 odors via `ORN_<glom>` suffix (same consensus); motor leg/wing/neck pools.
+
+Measured (`test_banc.py` PASS, 0.5 s/step): ethyl MB=1.116 vs geosmin 0.053,
+reward d=+0.023 / punish d=-0.031 (right directions), mech→DESC 0.07/0.10 →
+legs 0.048/0.044 + wing 0.058 (intact chain). Odor→legs ≈ 0 (deep chain,
+same limit as FAFB DN-turn). Build: `build_banc.py` (streams 11.75M rows,
+feeders git-ignored). No vision front-end / clock / C++ twin yet (v2).
+Male MCNS v1.0 exists (166.7k, Sept 2026) but its 1–3 GB bulk files don't fit
+this machine (1.7 GB free) — queued after disk upgrade.
+
 ## VNC (real, MANC v1.2.1)
 
 Full mode + `fly.enable_vnc()` appends the real male nerve cord

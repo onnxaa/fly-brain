@@ -5,3 +5,7 @@ __pycache__/
 # MANC feeders (re-download, see build_vnc.py)
 manc_meta.feather
 manc_simple.feather
+
+# BANC feeders (re-download, see build_banc.py)
+banc_meta.feather
+banc_edge_v2.feather
