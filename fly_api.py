@@ -311,6 +311,56 @@ class FlyBrainAPI:
         """Current activation mode."""
         return str(getattr(self, "_act", "relu"))
 
+    def set_std(self, alpha=0.0, tau=25.0):
+        """Short-term depression of input drive (optional, OFF by default).
+
+        Presynaptic-style: each driven neuron's gain g (init 1) scales its
+        outgoing drive val*g, then depresses g *= (1-alpha*a) with activity
+        a = clip(val/2, 0, 1); every step all gains recover
+        g += (1-g)/tau. Repeated strong drive habituates, novel pathways
+        stay fresh (dishabituation by anatomy), silence restores.
+        Applies in step() only (behavioral expression); train() /
+        x_teach_output() use full drive. State is transient (not saved by
+        save_weights). PROTOCOL, not data: tau/alpha are free constants
+        (units: trials; 1 step = 1 trial), default off so every published
+        PASS number is unaffected. Returns the new setting."""
+        a = float(alpha)
+        t = float(tau)
+        if a < 0 or a > 1:
+            raise ValueError("std alpha must be 0..1 (0=off)")
+        if t < 1:
+            raise ValueError("std tau must be >=1 trial")
+        self._std = {"alpha": a, "tau": t}
+        if a > 0 and getattr(self, "_std_g", None) is None:
+            self._std_g = np.ones(int(self.N), dtype=np.float32)
+        return dict(self._std)
+
+    def get_std(self):
+        """Current short-term-depression setting (default off)."""
+        d = getattr(self, "_std", None)
+        if d is None:
+            return {"alpha": 0.0, "tau": 25.0}
+        return dict(d)
+
+    def _apply_std(self, idx, val, alpha, tau):
+        n = int(self.N)
+        g = getattr(self, "_std_g", None)
+        if g is None or len(g) != n:
+            ng = np.ones(n, dtype=np.float32)
+            if g is not None:
+                ng[:len(g)] = np.asarray(g, dtype=np.float32)
+            g = ng
+            self._std_g = g
+        g += (1.0 - g) / float(tau)
+        out_v = []
+        for ik, vk in zip(idx, val):
+            ik = np.asarray(ik, dtype=np.int64)
+            vk = np.asarray(vk, dtype=np.float32)
+            a = np.clip(vk / 2.0, 0.0, 1.0).astype(np.float32)
+            out_v.append((vk * g[ik]).astype(np.float32))
+            g[ik] = np.clip(g[ik] * (1.0 - alpha * a), 0.0, 1.0)
+        return idx, out_v
+
     def _activate(self, x):
         """Elementwise f-I curve on (drive - thr)."""
         if getattr(self, "_act", "relu") == "lif":
@@ -883,6 +933,9 @@ class FlyBrainAPI:
         idx, val, info = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
                                      odor_left=odor_left, odor_right=odor_right,
                                      mech_left=mech_left, mech_right=mech_right)
+        _st = getattr(self, "_std", None)
+        if _st is not None and _st["alpha"] > 0:
+            idx, val = self._apply_std(idx, val, _st["alpha"], _st["tau"])
         if pure is None:
             pure = True  # default: data only, zero randomness (mb and full)
         spike = (str(getattr(self, "_act", "relu")) == "spike")

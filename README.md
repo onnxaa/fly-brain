@@ -18,7 +18,8 @@ in the explicitly opt-in **X zone** and is logged in a deviation ledger.
   `full` = entire brain (~1 s/step, ~1 GB RAM, needs the parquet).
 - A behavior readout stack (odor preference, tropotaxis steering, motor/lateral
   readouts), a plasticity stack (reward/punishment, protective DAN, SHY sleep,
-  autonomous sleep, circadian TTFL), and a validation battery (~20 assay scripts
+  autonomous sleep, circadian TTFL, optional short-term depression via
+  set_std() - OFF by default, protocol not data), and a validation battery (~20 assay scripts
   with `PASS-` verdicts, numbers in `results/`).
 
 ## How it works

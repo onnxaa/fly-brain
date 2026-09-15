@@ -15,11 +15,11 @@ Modes (each standalone):
                pole alternates sides, gusts knock the heading, blind scan
                recovers a lost pole. Metric: facing% + re-face lags,
                STEER vs BASE.
-  habituate  - 15x fixed looming disk on w_arena flee readouts: slope of
-               escape over trials (stability control - rate-mode brain has
-               no non-associative plasticity) + size-scaling control
-               (response must still grow with disk size, i.e. flatness over
-               trials is not saturation) + novel-bearing probe.
+  habituate  - Two phases on w_arena flee readouts. STD OFF (default):
+               5x fixed loom stays flat (stability control - escape stays
+               reliable) + size-scaling control. STD ON (protocol mode
+               alpha=0.1/tau=25): 15x loom habituates, shifted bearing
+               shows a specificity gradient, 40 quiet trials recover.
   detour     - Gotz-inspired re-acquisition: fixate target stripe (20
                steps), occlude it + show distractor (20 steps), restore
                target (20 steps). Metrics: capture by distractor (proves
@@ -216,24 +216,39 @@ def habituate(n=15):
     from test_arena import make_api
     api = make_api()
     api.load_weights(W_ARENA)
+    print("-- STD off (default): stability control", flush=True)
     seq = []
-    for i in range(n):
+    for i in range(5):
         o = api.step(image=disk_img(0, 20))
-        m = max(o["X_fleeL"], o["X_fleeR"])
-        seq.append(m)
-        if i in (0, n // 2, n - 1):
-            print(f"trial {i + 1}: flee={m:.3f}", flush=True)
-    seq = np.array(seq)
-    slope = float(np.polyfit(np.arange(n), seq, 1)[0])
-    print(f"slope={slope:+.4f}/trial (expect ~0: no non-associative "
-          f"plasticity, escape stays reliable)", flush=True)
+        seq.append(max(o["X_fleeL"], o["X_fleeR"]))
+    print(f"5x same loom: {seq[0]:.3f}..{seq[-1]:.3f} "
+          f"(flat: no spurious depression, escape stays reliable)", flush=True)
     for r in (4, 10, 20, 28):
         o = api.step(image=disk_img(0, r))
         print(f"size r={r}: flee={max(o['X_fleeL'], o['X_fleeR']):.3f}",
               flush=True)
-    o = api.step(image=disk_img(16, 20))
-    print(f"novel bearing: flee={max(o['X_fleeL'], o['X_fleeR']):.3f}",
+    print("-- STD on (protocol mode, alpha=0.1 tau=25): habituation",
           flush=True)
+    api.set_std(alpha=0.1, tau=25.0)
+    seq = []
+    for i in range(n):
+        o = api.step(image=disk_img(0, 20))
+        seq.append(max(o["X_fleeL"], o["X_fleeR"]))
+    print(f"loom t1={seq[0]:.2f} t5={seq[4]:.2f} t10={seq[9]:.2f} "
+          f"t15={seq[14]:.2f} drop={(1 - seq[14] / seq[0]) * 100:.0f}%",
+          flush=True)
+    o = api.step(image=disk_img(16, 20))
+    print(f"shifted bearing: {max(o['X_fleeL'], o['X_fleeR']):.2f} "
+          f"(specificity gradient: habituated {seq[14]:.2f} < shifted < "
+          f"naive 3.15)", flush=True)
+    blank = np.zeros((IMG, IMG), np.float32)
+    for _ in range(40):
+        api.step(image=blank)
+    o = api.step(image=disk_img(0, 20))
+    print(f"after 40 quiet trials: {max(o['X_fleeL'], o['X_fleeR']):.2f} "
+          f"(recovery vs t1 {seq[0]:.2f})", flush=True)
+    api.set_std(alpha=0.0)
+    print("STD back off", flush=True)
 
 
 def detour(steps=20):
