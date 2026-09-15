@@ -68,6 +68,24 @@ Parity: banc geosmin MB +0.0532, mcns −4.3808, motor pools — all identical
 to Python. Batteries (tmaze/...) stay full-mode (FAFB-validated); bench
 works in every mode.
 
+## Batteries across modes (CNS-agnostic protocols)
+
+`tmaze|spaced|heatbox(_ctl)|test-x|test-std|test-sleep` take `--mode` since
+this update (visual batteries stay full-only: no R front-end in banc/mcns;
+clock-gating stays full-only: no clock pools yet). Measured (8 CPU):
+
+| battery | banc (F) | mcns (M) |
+|---|---|---|
+| tmaze | learn ✓ PI→1.00, reversal ✗ (stays +1.00) | all ✓ incl. reversal −0.23 |
+| test-x | PASS 2.34/0.88 | PASS 1.86/0.21 |
+| test-std | PASS 61% drop | PASS 61% drop |
+| test-sleep | PASS (SHY wash) | PASS (SHY wash) |
+| heatbox | FAIL 80=80 (MB scale ~10x too small for −2.0 threshold) | PASS 22 vs 80 |
+| spaced | runs, PI ceiling +1.00 | massed 0.26 ≈ spaced 0.25, retention flat |
+
+Heatbox places: ALPN prosthesis in full, fixed odor-mixture prosthesis
+(seed 11) in banc/mcns — MECH subsets don't reach MB in rate mode.
+
 Weights: C++ uses raw float32 `.wbin` (save/load_wbin), not Python `.npz`.
 `buridan`/`habituate`/`detour` train inline when `--w-in` is missing.
 `heatbox` writes the punishment schedule for `heatbox_ctl` (yoked/unpaired).

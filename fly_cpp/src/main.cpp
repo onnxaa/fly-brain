@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
     }
     if (cmd.empty()) { usage(); return 1; }
     // batteries (full mode forced inside, --mode ignored except tests)
-    if (cmd == "tmaze") { fly::battery::tmaze(data, w_out); return 0; }
+    if (cmd == "tmaze") { fly::battery::tmaze(data, w_out, mode); return 0; }
     if (cmd == "train_fix") { fly::battery::train_fix(data, w_out); return 0; }
     if (cmd == "buridan") {
         fly::battery::buridan(data, w_in,
@@ -69,19 +69,19 @@ int main(int argc, char** argv) {
     if (cmd == "heatbox") {
         fly::battery::heatbox(data, sched.empty() ? "hb_sched.bin" : sched,
                               steps > 0 ? steps : 100,
-                              test_n > 0 ? test_n : 40);
+                              test_n > 0 ? test_n : 40, mode);
         return 0;
     }
     if (cmd == "heatbox_ctl") {
         fly::battery::heatbox_ctl(data, sched.empty() ? "hb_sched.bin" : sched,
                                   steps > 0 ? steps : 100,
-                                  test_n > 0 ? test_n : 40);
+                                  test_n > 0 ? test_n : 40, mode);
         return 0;
     }
-    if (cmd == "spaced") { fly::battery::spaced(data); return 0; }
-    if (cmd == "test-x") { fly::battery::test_x(data); return 0; }
-    if (cmd == "test-std") { fly::battery::test_std(data); return 0; }
-    if (cmd == "test-sleep") { fly::battery::test_sleep(data); return 0; }
+    if (cmd == "spaced") { fly::battery::spaced(data, mode); return 0; }
+    if (cmd == "test-x") { fly::battery::test_x(data, mode); return 0; }
+    if (cmd == "test-std") { fly::battery::test_std(data, mode); return 0; }
+    if (cmd == "test-sleep") { fly::battery::test_sleep(data, mode); return 0; }
     if (cmd == "bench") {
         fly::battery::bench(data, mode, steps > 0 ? steps : 5);
         return 0;

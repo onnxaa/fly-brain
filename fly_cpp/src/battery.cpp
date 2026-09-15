@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <random>
+#include <unordered_map>
 
 namespace fly { namespace battery {
 
@@ -32,9 +33,9 @@ static float getX(const Out& o, const std::string& n) {
 }
 
 // ---- tmaze ----
-void tmaze(const std::string& data, const std::string& w_out) {
+void tmaze(const std::string& data, const std::string& w_out, const std::string& mode) {
     const std::string CS_SHOCK = "methyl_salicylate", CS_SAFE = "ethyl_hexanoate";
-    FlyBrain api("full", data);
+    FlyBrain api(mode, data);
     api.enable_scaling();
     float pre_s = api.step(s_odor(CS_SAFE)).MB_pref;
     float pre_p = api.step(s_odor(CS_SHOCK)).MB_pref;
@@ -330,16 +331,58 @@ std::pair<std::vector<float>, int> place_code(float x) {
     return {v, b};
 }
 
+Stim s_place(const std::string& mode, const std::vector<float>& v) {
+    Stim s;
+    if (mode == "full") { s.has_alpn = true; s.alpn = v; }
+    else { s.has_mech = true; s.mech = v; }
+    return s;
+}
+
+// Whole-CNS place code: full uses the ALPN prosthesis (8-dim place_code);
+// banc/mcns have no ALPN pool, so places are fixed odor mixtures (seed 11)
+// over the 6 DoOR odors, in ORN-pool order (odor_vec path). Odor mixtures
+// drive MB strongly in both sexes; arbitrary MECH subsets do not.
+Stim s_place_cns(const FlyBrain& api, int bin) {
+    static const char* odors[6] = {"geosmin","co2","hexanone3","methyl_salicylate",
+                                   "butanedione","ethyl_hexanoate"};
+    std::unordered_map<int32_t,int> pos;
+    for (size_t i = 0; i < api.ORN.size(); i++) pos[api.ORN[i]] = (int)i;
+    std::vector<float> v(api.ORN.size(), 0.0f);
+    std::mt19937_64 rng(11);
+    float W[8][6];
+    for (int k = 0; k < 8; k++)
+        for (int j = 0; j < 6; j++)
+            W[k][j] = std::uniform_real_distribution<float>(0.0f, 1.0f)(rng);
+    for (int j = 0; j < 6; j++) {
+        auto iti = api.door_idx.find(odors[j]);
+        auto itv = api.door_val.find(odors[j]);
+        if (iti == api.door_idx.end() || itv == api.door_val.end()) continue;
+        auto& di = iti->second; auto& dv = itv->second;
+        for (size_t i = 0; i < di.size() && i < dv.size(); i++) {
+            auto f = pos.find(di[i]);
+            if (f != pos.end()) v[(size_t)f->second] += W[bin][j] * dv[i];
+        }
+    }
+    Stim s; s.has_odor_vec = true; s.odor_vec = v;
+    return s;
+}
+
+static Stim s_place_m(const std::string& mode, const FlyBrain& api,
+                      const std::vector<float>& v, int bin) {
+    if (mode == "full") return s_place(mode, v);
+    return s_place_cns(api, bin);
+}
+
 std::vector<int> heatbox_run(const std::string& data, const std::string& cond,
                              const std::vector<int>& sched,
-                             int steps, int test, float pun_us) {
-    FlyBrain api("full", data);
+                             int steps, int test, float pun_us,
+                             const std::string& mode) {
+    FlyBrain api(mode, data);
     api.enable_scaling();
     float init[8];
     for (int b = 0; b < 8; b++) {
         float xc = -10 + 20 * (b + 0.5f) / 8;
-        init[b] = s_alpn(place_code(xc).first).has_alpn ?
-            api.step(s_alpn(place_code(xc).first)).MB_pref : 0.0f;
+        init[b] = api.step(s_place_m(mode, api, place_code(xc).first, place_code(xc).second)).MB_pref;
     }
     std::vector<int> usched = sched;
     if (cond == "unpaired" && !sched.empty()) {
@@ -356,7 +399,7 @@ std::vector<int> heatbox_run(const std::string& data, const std::string& cond,
     std::vector<int> sched_out;
     for (int i = 0; i < steps; i++) {
         auto pc = place_code(x);
-        float pref = api.step(s_alpn(pc.first)).MB_pref;
+        float pref = api.step(s_place_m(mode, api, pc.first, pc.second)).MB_pref;
         if (cool > 0) cool--;
         else if (pref < init[pc.second] - 2.0f) { direction *= -1; cool = 6; }
         x += direction * 0.5f;
@@ -367,14 +410,14 @@ std::vector<int> heatbox_run(const std::string& data, const std::string& cond,
         if (cond == "contingent") pun = hot;
         else if (cond == "naive") pun = false;
         else pun = (i < (int)usched.size()) ? (usched[(size_t)i] != 0) : false;
-        if (pun) api.train(s_alpn(pc.first), 0.0f, pun_us);
+        if (pun) api.train(s_place_m(mode, api, pc.first, pc.second), 0.0f, pun_us);
         sched_out.push_back(pun ? 1 : 0);
         if (hot) { if (i < steps / 2) hot1++; else hot2++; }
     }
     int thot = 0;
     for (int i = 0; i < test; i++) {
         auto pc = place_code(x);
-        float pref = api.step(s_alpn(pc.first)).MB_pref;
+        float pref = api.step(s_place_m(mode, api, pc.first, pc.second)).MB_pref;
         if (cool > 0) cool--;
         else if (pref < init[pc.second] - 2.0f) { direction *= -1; cool = 6; }
         x += direction * 0.5f;
@@ -389,25 +432,27 @@ std::vector<int> heatbox_run(const std::string& data, const std::string& cond,
     return sched_out;
 }
 
-void heatbox(const std::string& data, const std::string& sched_out, int steps, int test) {
-    std::vector<int> s = heatbox_run(data, "contingent", {}, steps, test);
+void heatbox(const std::string& data, const std::string& sched_out, int steps, int test,
+             const std::string& mode) {
+    std::vector<int> s = heatbox_run(data, "contingent", {}, steps, test, 0.5f, mode);
     FILE* f = std::fopen(sched_out.c_str(), "wb");
     if (f) {
         for (int v : s) { int8_t b = v ? 1 : 0; std::fwrite(&b, 1, 1, f); }
         std::fclose(f);
     }
-    heatbox_run(data, "naive", {}, steps, test);
+    heatbox_run(data, "naive", {}, steps, test, 0.5f, mode);
 }
 
-void heatbox_ctl(const std::string& data, const std::string& sched_in, int steps, int test) {
+void heatbox_ctl(const std::string& data, const std::string& sched_in, int steps, int test,
+                 const std::string& mode) {
     std::vector<int> s;
     FILE* f = std::fopen(sched_in.c_str(), "rb");
     if (f) {
         int c; while ((c = std::fgetc(f)) != EOF) s.push_back(c ? 1 : 0);
         std::fclose(f);
     }
-    heatbox_run(data, "yoked", s, steps, test);
-    heatbox_run(data, "unpaired", s, steps, test);
+    heatbox_run(data, "yoked", s, steps, test, 0.5f, mode);
+    heatbox_run(data, "unpaired", s, steps, test, 0.5f, mode);
 }
 
 // ---- spaced ----
@@ -424,10 +469,10 @@ static int sleep_bout(FlyBrain& api, int want_asleep, int max_steps = 120) {
     }
     return slept;
 }
-static void spaced_setup(FlyBrain& api) {
-    api.enable_clock();
+static void spaced_setup(FlyBrain& api, const std::string& mode) {
+    if (mode == "full") api.enable_clock();
     api.enable_auto_sleep(1.0f);
-    api.tick_clock(12, 0.0f);
+    if (mode == "full") api.tick_clock(12, 0.0f);
 }
 static float spaced_pi(FlyBrain& api) {
     float s = api.step(s_odor("ethyl_hexanoate")).MB_pref;
@@ -435,37 +480,37 @@ static float spaced_pi(FlyBrain& api) {
     return pi_of(s, p);
 }
 
-void spaced(const std::string& data) {
-    FlyBrain m("full", data); m.enable_scaling();
+void spaced(const std::string& data, const std::string& mode) {
+    FlyBrain m(mode, data); m.enable_scaling();
     for (int i = 0; i < 5; i++) m.train(s_odor("methyl_salicylate"), 0.0f, 1.0f);
     std::printf("massed immediate PI=%+.2f\n", spaced_pi(m));
-    FlyBrain s("full", data); s.enable_scaling();
-    spaced_setup(s);
+    FlyBrain s(mode, data); s.enable_scaling();
+    spaced_setup(s, mode);
     for (int i = 0; i < 5; i++) {
         s.train(s_odor("methyl_salicylate"), 0.0f, 1.0f);
-        s.tick_clock(2, 0.0f);
+        if (mode == "full") s.tick_clock(2, 0.0f);
         sleep_bout(s, 4);
     }
     std::printf("spaced immediate PI=%+.2f (expect ~= massed: no interference mechanism)\n",
                 spaced_pi(s));
-    spaced_setup(m);
-    m.tick_clock(12, 0.0f);
+    spaced_setup(m, mode);
+    if (mode == "full") m.tick_clock(12, 0.0f);
     int n1 = sleep_bout(m, 40);
     std::printf("massed retention PI=%+.2f after 24h + %d sleep steps (SHY wash = the only forgetting)\n",
                 spaced_pi(m), n1);
-    s.tick_clock(12, 0.0f);
+    if (mode == "full") s.tick_clock(12, 0.0f);
     int n2 = sleep_bout(s, 40);
     std::printf("spaced retention PI=%+.2f after 24h + %d sleep steps (no consolidation: no LTM/ARM split)\n",
                 spaced_pi(s), n2);
-    FlyBrain a("full", data); a.enable_scaling();
+    FlyBrain a(mode, data); a.enable_scaling();
     for (int i = 0; i < 5; i++) a.train(s_odor("methyl_salicylate"), 0.0f, 1.0f);
     float p0 = spaced_pi(a), p1 = spaced_pi(a);
     std::printf("awake control: PI=%+.2f..%+.2f (nothing decays awake)\n", p0, p1);
 }
 
 // ---- fast protocol tests ----
-void test_x(const std::string& data) {
-    FlyBrain b("mb", data);
+void test_x(const std::string& data, const std::string& mode) {
+    FlyBrain b(mode, data);
     b.enable_scaling();
     b.x_add_output("t", 8, {}, -1, -1, 0);
     for (int i = 0; i < 3; i++) {
@@ -481,8 +526,8 @@ void test_x(const std::string& data) {
     std::printf("%s\n", (a > c && rep["EI_drift_%"] < 1.0) ? "PASS-x" : "FAIL-x");
 }
 
-void test_std(const std::string& data) {
-    FlyBrain b("mb", data);
+void test_std(const std::string& data, const std::string& mode) {
+    FlyBrain b(mode, data);
     b.enable_scaling();
     Stim sa = s_odor("A");
     std::vector<float> off;
@@ -503,7 +548,7 @@ void test_std(const std::string& data) {
     std::printf("%s\n", (flat && drop > 30 && rec > seq[14]) ? "PASS-std" : "FAIL-std");
 }
 
-void test_sleep(const std::string& data) {    FlyBrain b("mb", data);
+void test_sleep(const std::string& data, const std::string& mode) {    FlyBrain b(mode, data);
     b.enable_scaling();
     Stim sa = s_odor("A");
     float naive = b.step(sa).MB_pref;

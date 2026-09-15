@@ -13,8 +13,10 @@ namespace fly { namespace battery {
 
 float pi_of(float safe, float shock);
 
-// T-maze (full, DoOR). Saves .wbin if w_out non-empty.
-void tmaze(const std::string& data, const std::string& w_out = "");
+// T-maze (odor, DoOR). Saves .wbin if w_out non-empty.
+// mode: full|banc|mcns (odor batteries are mode-agnostic; visual ones need full).
+void tmaze(const std::string& data, const std::string& w_out = "",
+           const std::string& mode = "full");
 
 // Visual helpers (64x64, float 0..1)
 std::vector<float> bar_img(float u, int width = 5, float bg = 0.0f, float fg = 1.0f);
@@ -40,23 +42,28 @@ void habituate(const std::string& data, const std::string& w_in = "");
 // Gotz detour re-acquisition.
 void detour(const std::string& data, const std::string& w_in = "", int steps = 20);
 
-// Heatbox operant place learning (1D chamber, alpn= prosthesis, 8 bins)
+// Heatbox operant place learning (1D chamber, 8 bins; place prosthesis =
+// ALPN in full, MECH vector in banc/mcns which have no ALPN pool)
 std::pair<std::vector<float>, int> place_code(float x);
+Stim s_place(const std::string& mode, const std::vector<float>& v);
 std::vector<int> heatbox_run(const std::string& data, const std::string& cond,
                              const std::vector<int>& sched,
-                             int steps = 100, int test = 40, float pun_us = 0.5f);
+                             int steps = 100, int test = 40, float pun_us = 0.5f,
+                             const std::string& mode = "full");
 void heatbox(const std::string& data, const std::string& sched_out = "hb_sched.bin",
-             int steps = 100, int test = 40);
+             int steps = 100, int test = 40, const std::string& mode = "full");
 void heatbox_ctl(const std::string& data, const std::string& sched_in = "hb_sched.bin",
-                 int steps = 100, int test = 40);
+                 int steps = 100, int test = 40, const std::string& mode = "full");
 
-// Massed vs spaced + SHY retention (no consolidation mechanism)
-void spaced(const std::string& data);
+// Massed vs spaced + SHY retention (no consolidation mechanism).
+// Clock-gated only in full (FAFB clock pools); banc/mcns run on sleep
+// pressure alone (no circadian gating yet).
+void spaced(const std::string& data, const std::string& mode = "full");
 
-// Fast protocol tests (mb, seconds)
-void test_x(const std::string& data);
-void test_std(const std::string& data);
-void test_sleep(const std::string& data);
+// Fast protocol tests (default mb, seconds; odor halves work in every mode)
+void test_x(const std::string& data, const std::string& mode = "mb");
+void test_std(const std::string& data, const std::string& mode = "mb");
+void test_sleep(const std::string& data, const std::string& mode = "mb");
 
 // Microbenchmark: load + N in-process steps + train + sleep (ms per phase)
 void bench(const std::string& data, const std::string& mode, int steps = 5);
