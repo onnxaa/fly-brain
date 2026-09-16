@@ -85,10 +85,22 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
         tr_pre.assign((size_t)nN, 0.0);
         tr_post.assign((size_t)nN, 0.0);
     }
+    bool carry = (state_leak > 0 && spk_nN == nN &&
+                  (int)spk_v.size() == nN);
     std::vector<double> v(nN, V0), vth(nN, VTH), gg(nN, 0.0), adapt(nN, 0.0);
     for (auto a : apl_idx)
         if (a >= 0 && a < nN) vth[(size_t)a] = V0 + APL_F * (VTH - V0);
     std::vector<int> refr(nN, 0);
+    if (carry) {
+        // exact continuation: deviations decay by leak (= inter-trial gap)
+        for (int i = 0; i < nN; i++) {
+            v[(size_t)i] = V0 + (spk_v[(size_t)i] - V0) * state_leak;
+            gg[(size_t)i] = spk_gg[(size_t)i] * state_leak;
+            adapt[(size_t)i] = spk_adapt[(size_t)i] * state_leak;
+            refr[(size_t)i] = spk_refr[(size_t)i];
+        }
+        spk_calls++;
+    }
     std::vector<int> nsp(nN, 0), nrel(nN, 0);
     std::vector<int32_t> didx;
     std::vector<double> dval;
@@ -106,7 +118,13 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
     std::deque<std::vector<double>> dq;
     dq.emplace_back(nN, 0.0);
     dq.emplace_back(nN, 0.0);
-    std::mt19937_64 rng((uint64_t)spike_seed);
+    if (carry)
+        for (int i = 0; i < nN; i++) {
+            dq[0][(size_t)i] = spk_dq0[(size_t)i] * state_leak;
+            dq[1][(size_t)i] = spk_dq1[(size_t)i] * state_leak;
+        }
+    std::mt19937_64 rng(carry ? (uint64_t)spike_seed + spk_calls
+                              : (uint64_t)spike_seed);
     std::uniform_real_distribution<double> U(0.0, 1.0);
     const double DEC_A = std::exp(-DT / 100.0), A_INC = spike_ainc;
     const double AD_TAU = 50.0, AD_FLOOR = spike_adapt;
@@ -211,6 +229,10 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
         }
     }
     int win = std::max(1, T - BURN);
+    if (state_leak > 0) {
+        spk_v = v; spk_gg = gg; spk_adapt = adapt; spk_refr = refr;
+        spk_dq0 = dq[0]; spk_dq1 = dq[1]; spk_nN = nN;
+    }
     std::vector<float> hz(N);
     for (int i = 0; i < N; i++) hz[(size_t)i] = (float)(nsp[(size_t)i] + nrel[(size_t)i]) / win * 1000.0f;
     return hz;

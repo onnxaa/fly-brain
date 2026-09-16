@@ -201,6 +201,10 @@ public:
                                      const std::vector<float>& val,
                                      bool plastic = false);
     double stdp_Aplus = 0.005, stdp_Aminus = 0.0052, stdp_tau = 20.0;
+    // spike inter-step state (set_state leak>0 only; exact continuation)
+    std::vector<double> spk_v, spk_gg, spk_adapt, spk_dq0, spk_dq1;
+    std::vector<int> spk_refr;
+    uint64_t spk_calls = 0; int spk_nN = -1;
     Out step(const Stim& s, int hops = -1, float thr = 0.0f);
     Out train(const Stim& s, float reward = 0.0f, float punish = 0.0f,
               bool gated = true, int hops = -1, float thr = 0.0f,

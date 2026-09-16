@@ -592,6 +592,22 @@ void test_state(const std::string& data, const std::string& mode) {
     float ab = seq("A", "B", false, true), ba = seq("B", "A", false, true);
     std::printf("order A->B: %.3f B->A: %.3f sep=%+.3f\n", ab, ba, ab - ba);
     std::printf("%s\n", (ab > ba + 0.2f) ? "PASS-state" : "FAIL-state");
+    // spike: same temporal memory via v/gg/adapt/refr/dq carry (binary
+    // protocol - value targets need Hz-scale calibration in spike mode).
+    b.set_activation("spike");
+    b.set_state(0.5f);
+    auto sseq = [&](const std::string& o1, const std::string& o2, bool teach, bool high) {
+        b.reset_state();
+        b.step(stim_odor(o1));
+        Stim s = stim_odor(o2);
+        if (teach) b.x_teach_output("seq", 2, 0.5f, high, false, 0.0f, "new", 0.02f, s);
+        else return b.step(s).X["seq"];
+        return 0.0f;
+    };
+    for (int i = 0; i < 4; i++) { sseq("A", "B", true, true); sseq("B", "A", true, false); }
+    float sab = sseq("A", "B", false, true), sba = sseq("B", "A", false, true);
+    std::printf("spike order A->B: %.3f B->A: %.3f sep=%+.3f\n", sab, sba, sab - sba);
+    std::printf("%s\n", (sab > sba) ? "PASS-spike-state" : "FAIL-spike-state");
 }
 
 void bench(const std::string& data, const std::string& mode, int steps) {

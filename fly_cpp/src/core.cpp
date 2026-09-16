@@ -391,7 +391,12 @@ float FlyBrain::set_state(float leak) {
     if ((int)f_prev.size() != N) f_prev.assign((size_t)N, 0.0f);
     return state_leak;
 }
-void FlyBrain::reset_state() { f_prev.assign((size_t)N, 0.0f); }
+void FlyBrain::reset_state() {
+    f_prev.assign((size_t)N, 0.0f);
+    spk_v.clear(); spk_gg.clear(); spk_adapt.clear();
+    spk_dq0.clear(); spk_dq1.clear(); spk_refr.clear();
+    spk_calls = 0; spk_nN = -1;
+}
 
 void FlyBrain::set_activation(const std::string& name, float sat, int Tms, int seed,
                               float wdrv, float ainc, float rmax, float adapt, int burn) {

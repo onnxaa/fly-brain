@@ -691,6 +691,10 @@ class FlyBrainAPI:
             gg_idx = np.asarray(gset, dtype=np.int32)
             gg_idx = gg_idx[gg_idx < nN]
             graded[gg_idx] = True
+        _lk = float(getattr(self, "_state_leak", 0.0) or 0.0)
+        _st = getattr(self, "_spk_state", None)
+        _carry = (_lk > 0 and isinstance(_st, dict) and _st.get("nN") == nN
+                  and len(_st.get("v", ())) == nN)
         v = np.full(nN, V0, np.float64)
         vth = np.full(nN, VTH, np.float64)
         if len(apl_idx):
@@ -698,6 +702,19 @@ class FlyBrainAPI:
         gg = np.zeros(nN, np.float64)
         refr = np.zeros(nN, np.int16)
         adapt = np.zeros(nN, np.float64)  # SFA current (mAHP-like)
+        if _carry:
+            # exact continuation: deviations decay by leak (= inter-trial gap)
+            v = V0 + (_st["v"] - V0) * _lk
+            gg = _st["gg"] * _lk
+            adapt = _st["adapt"] * _lk
+            refr = _st["refr"].copy()
+        dq = deque([np.zeros(nN, np.float64) for _ in range(2)])
+        if _carry:
+            dq = deque([_st["dq0"] * _lk, _st["dq1"] * _lk])
+        _calls = int(getattr(self, "_spk_calls", 0) or 0)
+        if _carry:
+            _calls += 1
+            self._spk_calls = _calls
         DEC_A = float(np.exp(-DT / 100.0))
         A_INC = float(getattr(self, "_spike_ainc", 4.0))  # mV per spike
         nsp = np.zeros(nN, np.int32)
@@ -708,8 +725,7 @@ class FlyBrainAPI:
         # Poisson drive: rate = val/2*rmax (val 2.0 = rmax, test_lif R150).
         dp = dval * float(getattr(self, "_spike_rmax", 150.0)) / 2.0 * DT / 1000.0
         G = np.where(graded)[0]
-        dq = deque([np.zeros(nN, np.float64) for _ in range(2)])
-        rng = np.random.default_rng(seed)
+        rng = np.random.default_rng([seed, _calls] if _carry else seed)
         # sensory adaptation (ORN/R adapt in ~100ms; without it sustained
         # 150Hz Poisson piles 50mV+ into g and the brain saturates or dies -
         # measured cliff: wdrv 27.5 -> KC 77%, 13.75 -> KC 0%).
@@ -793,6 +809,10 @@ class FlyBrainAPI:
                     dq[-1] += np.bincount(post[m], weights=(w[m] * W_SYN).astype(np.float64),
                                           minlength=nN)
         _win = max(1, T - BURN)
+        if _lk > 0:
+            self._spk_state = {"nN": nN, "v": v.copy(), "gg": gg.copy(),
+                               "adapt": adapt.copy(), "refr": refr.copy(),
+                               "dq0": np.asarray(dq[0]), "dq1": np.asarray(dq[1])}
         return (nsp + nrel) / _win * 1000.0
 
     # ---- sensors ----
@@ -1148,6 +1168,8 @@ class FlyBrainAPI:
     def reset_state(self):
         """Clear the inter-step carry (keeps leak setting)."""
         self._hprev = np.zeros(self.N, dtype=np.float32)
+        self._spk_state = None
+        self._spk_calls = 0
         return True
 
 
