@@ -1130,6 +1130,26 @@ class FlyBrainAPI:
         """Current normalization regime."""
         return str(getattr(self, "_scaling", "static"))
 
+    def set_state(self, leak=0.0):
+        """Inter-step persistent activity (leaky working memory, default 0=off).
+        leak in [0,1): forward starts from base + leak*h_prev instead of base
+        alone, and stores its final activity for the next step. leak=0 is
+        bit-identical to the classic stateless behavior (all validations hold).
+        Enables temporal sequences (A->B vs B->A), bump persistence, etc.
+        Use reset_state() to clear the carry without changing leak."""
+        leak = float(leak)
+        if not 0.0 <= leak < 1.0:
+            raise ValueError("leak must be in [0,1)")
+        self._state_leak = leak
+        if len(getattr(self, "_hprev", np.zeros(0))) != self.N:
+            self._hprev = np.zeros(self.N, dtype=np.float32)
+        return self._state_leak
+
+    def reset_state(self):
+        """Clear the inter-step carry (keeps leak setting)."""
+        self._hprev = np.zeros(self.N, dtype=np.float32)
+        return True
+
 
     def _forward_pure_mb(self, idx, val, hops=1, thr=0.0):
         if getattr(self, "_fan", None) is None:
@@ -1139,6 +1159,12 @@ class FlyBrainAPI:
         if len(idx):
             np.add.at(base, idx, val)
         a = base.copy()
+        if len(getattr(self, "_hprev", np.zeros(0))) != self.N:
+            self._hprev = np.zeros(self.N, dtype=np.float32)
+        _lk = float(getattr(self, "_state_leak", 0.0) or 0.0)
+        _hp = getattr(self, "_hprev", None)
+        if _lk > 0 and _hp is not None and len(_hp) == self.N:
+            a += (_lk * _hp).astype(np.float32)
         sw = self.wM*self.sign
         for _ in range(hops):
             if str(getattr(self, "_scaling", "static")) == "active":
@@ -1156,6 +1182,7 @@ class FlyBrainAPI:
                 np.add.at(agg, self.post, msg)
                 agg /= (self._fan + 1e-6)
             a = self._activate(agg - thr) + base
+        self._hprev = a.astype(np.float32)
         return a
 
     # ---- forward (legacy: random projections; kept only as pure=False) ----
@@ -1182,6 +1209,12 @@ class FlyBrainAPI:
         if len(idx):
             _np.add.at(base, idx, val)
         a = base.copy()  # stimulus = current source (clamp), not initial state
+        if len(getattr(self, "_hprev", np.zeros(0))) != self.N:
+            self._hprev = np.zeros(self.N, dtype=np.float32)
+        _lk = float(getattr(self, "_state_leak", 0.0) or 0.0)
+        _hp = getattr(self, "_hprev", None)
+        if _lk > 0 and _hp is not None and len(_hp) == self.N:
+            a += (_lk * _hp).astype(_np.float32)
         sw = (self.wM*self.sign).astype(_np.float32)  # TRAINABLE weights (not static parquet)
         CH = 2000000
         active = str(getattr(self, "_scaling", "static")) == "active"
@@ -1203,6 +1236,7 @@ class FlyBrainAPI:
                     _np.add.at(agg, self.post[e], a[self.pre[e]]*sw[e])
                 agg /= (self._fan + 1e-6)
             a = self._activate(agg - thr) + base
+        self._hprev = a.astype(np.float32)
         return a
 
     def _forward_full(self, idx, val, hops=2):

@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
     int steps = -1, test_n = -1, n_switch = -1;
     std::string scaling, img_bin; int imgH = 0, imgW = 0, vpol = 0;
     bool stdp = false;
+    float leak = 0.0f;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto need = [&](std::string& dst) { dst = argv[++i]; };
@@ -57,6 +58,7 @@ int main(int argc, char** argv) {
         else if (a == "--img-w") imgW = std::stoi(argv[++i]);
         else if (a == "--vpol") vpol = std::stoi(argv[++i]);
         else if (a == "--stdp") stdp = true;
+        else if (a == "--leak") leak = std::stof(argv[++i]);
         else if (a[0] != '-') cmd = a;
     }
     if (cmd.empty()) { usage(); return 1; }
@@ -90,6 +92,7 @@ int main(int argc, char** argv) {
     if (cmd == "test-x") { fly::battery::test_x(data, mode); return 0; }
     if (cmd == "test-std") { fly::battery::test_std(data, mode); return 0; }
     if (cmd == "test-sleep") { fly::battery::test_sleep(data, mode); return 0; }
+    if (cmd == "test-state") { fly::battery::test_state(data, mode); return 0; }
     if (cmd == "bench") {
         fly::battery::bench(data, mode, steps > 0 ? steps : 5);
         return 0;
@@ -100,6 +103,7 @@ int main(int argc, char** argv) {
     if (use_vnc) b.enable_vnc();
     if (!act.empty()) b.set_activation(act);
     if (!scaling.empty()) b.set_scaling(scaling);
+    if (leak > 0) b.set_state(leak);
     if (!w_in.empty()) b.load_wbin(w_in);
     if (cmd == "info") {
         std::printf("mode=%s N=%d E=%lld EI=%.1f\n", mode.c_str(), b.N, (long long)b.E,

@@ -83,7 +83,7 @@ public:
     bool csr_direct = false;
     bool csr_built = false;
     // persistent forward buffers (avoid 3xN allocs per forward_pure call)
-    std::vector<float> f_base, f_a, f_agg, f_fan;
+    std::vector<float> f_base, f_a, f_agg, f_fan, f_prev;
     // roles
     std::vector<int32_t> ORN, MECH, VIS, ALPN, EFFERENT, DESC, MEv, LOv;
     std::vector<int32_t> ORN_L, ORN_R, ALPN_L, ALPN_R, MECH_L, MECH_R;
@@ -113,6 +113,7 @@ public:
     // protocol state
     int hops = 1;
     int scaling = 0; // 0=static fan (default, all validations), 1=active fan (deep chains live)
+    float state_leak = 0.0f; // inter-step carry, 0=off (bit-identical classic)
     std::string act = "relu"; float lif_sat = 2.0f;
     int act_id = 0; // 0=relu, 1=lif (mirrors act; avoids per-element strcmp)
     int spike_T = 200, spike_seed = 7; float spike_wdrv = 68.75f;
@@ -169,6 +170,7 @@ public:
     // protocol setters (mirror Python names)
     void set_hops(int h); int get_hops() const;
     void set_scaling(const std::string& s); std::string get_scaling() const;
+    float set_state(float leak); void reset_state();
     void set_activation(const std::string& name, float sat = 2.0f, int Tms = 200,
                         int seed = 7, float wdrv = 68.75f, float ainc = -1,
                         float rmax = 150.0f, float adapt = -1, int burn = -1);

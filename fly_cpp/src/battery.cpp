@@ -575,6 +575,25 @@ void test_sleep(const std::string& data, const std::string& mode) {    FlyBrain 
     std::printf("%s (SHY wash toward baseline)\n", toward ? "PASS-sleep" : "FAIL-sleep");
 }
 
+void test_state(const std::string& data, const std::string& mode) {
+    FlyBrain b(mode, data);
+    b.enable_scaling();
+    b.set_state(0.3f);
+    b.x_add_output("seq", 16, {}, 64, -1, 5);
+    auto seq = [&](const std::string& o1, const std::string& o2, bool teach, bool high) {
+        b.reset_state();
+        b.step(stim_odor(o1));
+        Stim s = stim_odor(o2);
+        if (teach) b.x_teach_output("seq", 1, 0.7f, high, false, 0.0f, "new", 0.02f, s);
+        else return b.step(s).X["seq"];
+        return 0.0f;
+    };
+    for (int i = 0; i < 6; i++) { seq("A", "B", true, true); seq("B", "A", true, false); }
+    float ab = seq("A", "B", false, true), ba = seq("B", "A", false, true);
+    std::printf("order A->B: %.3f B->A: %.3f sep=%+.3f\n", ab, ba, ab - ba);
+    std::printf("%s\n", (ab > ba + 0.2f) ? "PASS-state" : "FAIL-state");
+}
+
 void bench(const std::string& data, const std::string& mode, int steps) {
     using clk = std::chrono::steady_clock;
     auto ms = [](clk::time_point a, clk::time_point b) {

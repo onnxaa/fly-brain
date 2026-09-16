@@ -385,6 +385,14 @@ void FlyBrain::set_scaling(const std::string& s) {
 }
 std::string FlyBrain::get_scaling() const { return scaling ? "active" : "static"; }
 
+float FlyBrain::set_state(float leak) {
+    if (leak < 0 || leak >= 1) throw std::runtime_error("leak must be in [0,1)");
+    state_leak = leak;
+    if ((int)f_prev.size() != N) f_prev.assign((size_t)N, 0.0f);
+    return state_leak;
+}
+void FlyBrain::reset_state() { f_prev.assign((size_t)N, 0.0f); }
+
 void FlyBrain::set_activation(const std::string& name, float sat, int Tms, int seed,
                               float wdrv, float ainc, float rmax, float adapt, int burn) {
     if (name != "relu" && name != "lif" && name != "spike")
@@ -677,6 +685,9 @@ std::vector<float> FlyBrain::forward_pure(const std::vector<int32_t>& idx,
         int32_t id = idx[i];
         if (id >= 0 && id < N) f_base[(size_t)id] += val[i];
     }
+    if ((int)f_prev.size() != N) f_prev.assign((size_t)N, 0.0f);
+    if (state_leak > 0 && (int)f_prev.size() == N)
+        for (int i = 0; i < N; i++) f_base[(size_t)i] += state_leak * f_prev[(size_t)i];
     f_a = f_base; // copy (size N, buffers exact)
     const float* __restrict__ sw = csr_sw.data();
     const int32_t* __restrict__ cp = csr_pre.data();
@@ -729,6 +740,7 @@ std::vector<float> FlyBrain::forward_pure(const std::vector<int32_t>& idx,
             }
         }
     }
+    f_prev = f_a;
     return f_a;
 }
 
