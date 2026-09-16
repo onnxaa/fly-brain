@@ -114,7 +114,12 @@ with correct sign (lumpy individual, ~1-2 ranks/step). Mechanism: rotation
 integrator (direction from PEN data: left-PEN +1.5 ranks) + K=2 maintenance
 over frozen EPG+D7+PEN weights (fan-norm, raw EM ratios, CX-local carry
 0.85). Spike: cue-evoked bump only (recipe spk2.0/GI2/u.08/bg2/plat.8);
-spike dark-hold/velocity = OPEN (needs per-neuron E/I homeostasis).
+spike dark-hold/velocity = OPEN. Per-neuron homeostasis status: SHIPPED =
+compartment-local fan equalization (EB neurons scale EB inputs; flattens
+20x PEN wells); TRIED+REVERTED = static size gain (kills MB propagation,
+LIF cliff) and intrinsic-plasticity thresholds (too slow at ETA<=0.1,
+suppress+jump at 0.5) - see fly_api notes. VOL per-neuron data (Google
+segmentation, build_vol.py) stored for future compartment models.
 Legacy CX_bump mapping bug fixed (pool indexed by rank -> argsort); legacy
 assays unaffected (loop armed only by cx_cue/angvel/set_cx_gain).
 

@@ -200,6 +200,14 @@ class FlyBrainAPI:
                 setattr(self, "CX_" + _k, np.asarray(r[_k], dtype=np.int32) if _k in r else np.zeros(0, np.int32))
             self.CX_ring_validated = bool(np.asarray(
                 r["CX_ring_validated"]).flat[0]) if "CX_ring_validated" in r else False
+            # per-neuron volume, Google BANC segmentation (build_vol.py).
+            # NaN (8%) -> median at use. MCNS annot has no volume -> absent.
+            if "VOL" in r and len(np.asarray(r["VOL"])) == self.N:
+                self.VOL = np.asarray(r["VOL"], dtype=np.float32)
+                self.VOL_med = float(np.nanmedian(self.VOL))
+            else:
+                self.VOL = None
+                self.VOL_med = 0.0
             self.CLOCK_M = np.asarray(r["CLOCK_M"], dtype=np.int32) if "CLOCK_M" in r else np.zeros(0, np.int32)
             self.CLOCK_E = np.asarray(r["CLOCK_E"], dtype=np.int32) if "CLOCK_E" in r else np.zeros(0, np.int32)
             self.GRN = np.asarray(r["GRN"], dtype=np.int32) if "GRN" in r else np.zeros(0, np.int32)
@@ -263,6 +271,14 @@ class FlyBrainAPI:
                 setattr(self, "CX_" + _k, np.asarray(r[_k], dtype=np.int32) if _k in r else np.zeros(0, np.int32))
             self.CX_ring_validated = bool(np.asarray(
                 r["CX_ring_validated"]).flat[0]) if "CX_ring_validated" in r else False
+            # per-neuron volume, Google BANC segmentation (build_vol.py).
+            # NaN (8%) -> median at use. MCNS annot has no volume -> absent.
+            if "VOL" in r and len(np.asarray(r["VOL"])) == self.N:
+                self.VOL = np.asarray(r["VOL"], dtype=np.float32)
+                self.VOL_med = float(np.nanmedian(self.VOL))
+            else:
+                self.VOL = None
+                self.VOL_med = 0.0
             self.CLOCK_M = np.asarray(r["CLOCK_M"], dtype=np.int32) if "CLOCK_M" in r else np.zeros(0, np.int32)
             self.CLOCK_E = np.asarray(r["CLOCK_E"], dtype=np.int32) if "CLOCK_E" in r else np.zeros(0, np.int32)
             self.GRN = np.asarray(r["GRN"], dtype=np.int32) if "GRN" in r else np.zeros(0, np.int32)
@@ -898,6 +914,15 @@ class FlyBrainAPI:
                 _plat = (_st["plat"] * _lk).astype(np.float64)
             else:
                 _plat = np.zeros(nN, np.float64)
+        # (VOL per-neuron data loaded but NOT applied as static gain:
+        # measured: sqrt(median/vol) scaling kills MB propagation (LIF
+        # threshold cliff). Size stays available for future compartment
+        # models. Tried and REVERTED 2026-09: (a) static size gain (above);
+        # (b) intrinsic-plasticity thresholds theta (Desai-like, ETA
+        # 0.03-0.5, evoked-excluded): too slow to matter at 0.03-0.1,
+        # suppresses+jumps at 0.5 - cannot fix Poisson-WTA jumps between
+        # windows. Real fix needs per-neuron E/I co-tuning faster than the
+        # trial timescale or regularized (non-Poisson) CX drive.)
         v = np.full(nN, V0, np.float64)
         vth = np.full(nN, VTH, np.float64)
         if len(apl_idx):
