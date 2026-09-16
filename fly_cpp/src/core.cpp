@@ -916,13 +916,14 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
     return o;
 }
 
-Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int hops_o, float thr) {
+Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int hops_o, float thr, bool stdp) {
     int hh = (hops_o < 0) ? hops : hops_o;
     std::vector<int32_t> idx; std::vector<float> vv;
     std::map<std::string,float> mo; bool hm=false;
     encode(s, idx, vv, mo, hm);
     bool spk = (act=="spike");
-    std::vector<float> h = spk ? forward_spike(idx, vv) : forward_pure(idx, vv, hh, thr);
+    std::vector<float> h = spk ? forward_spike(idx, vv, stdp) : forward_pure(idx, vv, hh, thr);
+    if (spk && stdp) refresh_weights();
     size_t nKC = KC.size();
     std::vector<float> kcs(nKC);
     for (size_t i=0;i<nKC;i++) kcs[i]=h[(size_t)KC[i]];
@@ -932,7 +933,7 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
     float kt=sk[sk.size()-kk];
     std::vector<char> m(nKC,0);
     for(size_t i=0;i<nKC;i++) if(kcs[i]>=kt) m[i]=1;
-    if ((mode=="full"||mode=="banc"||mode=="mcns") && reward!=0) {
+    if ((mode=="full"||mode=="banc"||mode=="mcns") && reward!=0 && !(spk && stdp)) {
         // fused eligibility + weight update (was: two passes over E)
         int64_t nE = E;
         #pragma omp parallel for schedule(static) if(nE>1000000)

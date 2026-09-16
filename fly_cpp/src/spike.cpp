@@ -13,7 +13,8 @@
 namespace fly {
 
 std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
-                                           const std::vector<float>& val) {
+                                           const std::vector<float>& val,
+                                           bool plastic) {
     const int T = spike_T;
     const double V0 = -52.0, VRST = -52.0, VTH = -45.0, DT = 1.0;
     const double DEC_G = std::exp(-DT / 5.0), K_MBR = DT / 20.0;
@@ -58,10 +59,31 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
     std::vector<int32_t> cpost(EX);
     std::vector<double> cw(EX);
     std::vector<int64_t> cur = hpre;
+    std::vector<int32_t> cidx((size_t)EX);
     for (int64_t e = 0; e < EX; e++) {
         int64_t s = cur[pX[(size_t)e]]++;
         cpost[(size_t)s] = qX[(size_t)e];
         cw[(size_t)s] = wX[(size_t)e];
+        cidx[(size_t)s] = (int32_t)e;
+    }
+    // trace-STDP structures (plastic only): CSR by post over slots + traces.
+    // wX index < E maps to wM (base+X edges); mb APL-extension slots skipped.
+    std::vector<int64_t> hpostB;
+    std::vector<int32_t> bslot;
+    std::vector<double> tr_pre, tr_post;
+    const double DEC_T = std::exp(-DT / stdp_tau);
+    if (plastic) {
+        hpostB.assign((size_t)nN + 1, 0);
+        for (int64_t s = 0; s < EX; s++) hpostB[(size_t)cpost[(size_t)s] + 1]++;
+        for (int i = 0; i < nN; i++) hpostB[(size_t)i + 1] += hpostB[(size_t)i];
+        bslot.assign((size_t)EX, 0);
+        std::vector<int64_t> cur2(hpostB.begin(), hpostB.begin() + nN);
+        for (int64_t s = 0; s < EX; s++) {
+            int64_t t = cur2[(size_t)cpost[(size_t)s]]++;
+            bslot[(size_t)t] = (int32_t)s;
+        }
+        tr_pre.assign((size_t)nN, 0.0);
+        tr_post.assign((size_t)nN, 0.0);
     }
     std::vector<double> v(nN, V0), vth(nN, VTH), gg(nN, 0.0), adapt(nN, 0.0);
     for (auto a : apl_idx)
@@ -142,6 +164,43 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
             v[(size_t)s] = VRST; gg[(size_t)s] = 0.0;
             adapt[(size_t)s] += A_INC; refr[(size_t)s] = 2;
             nsp[(size_t)s]++;
+        }
+        if (plastic && t >= BURN) {
+            for (size_t i = 0; i < tr_pre.size(); i++) {
+                tr_pre[i] *= DEC_T; tr_post[i] *= DEC_T;
+            }
+        }
+        if (plastic && t >= BURN && !sp.empty()) {
+            // trace-STDP on wM magnitudes (true spikes only, burn excluded).
+            // Valence stays in the DAN slab in train() (no third factor yet).
+            #pragma omp parallel for schedule(static) if(sp.size() > 64)
+            for (size_t si = 0; si < sp.size(); si++) {
+                int s = sp[si];
+                for (int64_t e = hpre[s]; e < hpre[s + 1]; e++) {
+                    int64_t o = cidx[(size_t)e];
+                    if (o < 0 || o >= E) continue;
+                    int32_t q = cpost[(size_t)e];
+                    double nw = (double)wM[(size_t)o] - stdp_Aminus * tr_post[(size_t)q];
+                    if (nw < 0.05) nw = 0.05; if (nw > 650.0) nw = 650.0;
+                    wM[(size_t)o] = (float)nw;
+                    cw[(size_t)e] = nw * sign[(size_t)o];
+                }
+            }
+            #pragma omp parallel for schedule(static) if(sp.size() > 64)
+            for (size_t si = 0; si < sp.size(); si++) {
+                int q = sp[si];
+                for (int64_t k = hpostB[q]; k < hpostB[q + 1]; k++) {
+                    int64_t e = bslot[(size_t)k];
+                    int64_t o = cidx[(size_t)e];
+                    if (o < 0 || o >= E) continue;
+                    int32_t pp = (int32_t)pX[(size_t)o];
+                    double nw = (double)wM[(size_t)o] + stdp_Aplus * tr_pre[(size_t)pp];
+                    if (nw < 0.05) nw = 0.05; if (nw > 650.0) nw = 650.0;
+                    wM[(size_t)o] = (float)nw;
+                    cw[(size_t)e] = nw * sign[(size_t)o];
+                }
+            }
+            for (int s : sp) { tr_pre[(size_t)s] += 1.0; tr_post[(size_t)s] += 1.0; }
         }
         for (int s : rel) nrel[(size_t)s]++;
         if (!ev.empty()) {

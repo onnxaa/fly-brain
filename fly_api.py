@@ -654,7 +654,8 @@ class FlyBrainAPI:
             del con, comp, sup
         return None, None, c["ext"]
 
-    def _forward_spike(self, idx, val, Tms=None, seed=None):
+    def _forward_spike(self, idx, val, Tms=None, seed=None, plastic=False,
+                       stdp_Aplus=0.005, stdp_Aminus=0.0052, stdp_tau=20.0):
         """LIF spiking forward (test_lif v2 1:1): Poisson drive from encode
         (rate = val*75Hz, so val 2.0 = 150Hz like DoOR R150 / RMAX150),
         g-reset, 2-step refractory/delay, signed weights, APL x4, graded
@@ -716,6 +717,12 @@ class FlyBrainAPI:
         AD_TAU = 50.0
         AD_FLOOR = float(getattr(self, "_spike_adapt", 0.2))
         BURN = int(getattr(self, "_spike_burn", 50))
+        # trace-STDP (opt-in): per-neuron pre/post traces, O(E) edge-mask
+        # updates piggybacking on the propagation scans. Unsupervised Hebbian;
+        # valence stays in the DAN slab in train() (no third factor yet).
+        DEC_T = float(np.exp(-DT / float(stdp_tau)))
+        tr_pre = np.zeros(nN, np.float64) if plastic else None
+        tr_post = np.zeros(nN, np.float64) if plastic else None
         for t in range(T):
             gg *= DEC_G
             adapt *= DEC_A
@@ -758,6 +765,28 @@ class FlyBrainAPI:
                 nsp[sp] += 1
             if len(rel):
                 nrel[rel] += 1
+            if plastic and t >= BURN and len(sp):
+                # trace-STDP on self weights (magnitudes; signed local copy
+                # resynced below). Ext nodes (>=N) excluded.
+                tr_pre *= DEC_T
+                tr_post *= DEC_T
+                sps = sp[sp < self.N]
+                if len(sps):
+                    _E = len(self.pre)
+                    mp = np.isin(self.pre, sps)
+                    if mp.any():
+                        _dw = float(stdp_Aminus) * tr_post[self.post[mp]]
+                        self.wM[mp] = np.clip(self.wM[mp] - _dw, 0.05, 650.0).astype(np.float32)
+                    mq = np.isin(self.post, sps)
+                    if mq.any():
+                        _dw = float(stdp_Aplus) * tr_pre[self.pre[mq]]
+                        self.wM[mq] = np.clip(self.wM[mq] + _dw, 0.05, 650.0).astype(np.float32)
+                    w[:_E] = (self.wM * self.sign).astype(np.float64)
+                tr_pre[sp] += 1.0
+                tr_post[sp] += 1.0
+            elif plastic:
+                tr_pre *= DEC_T
+                tr_post *= DEC_T
             if len(ev):
                 m = np.isin(pre, ev)
                 if m.any():
@@ -1813,8 +1842,11 @@ class FlyBrainAPI:
         return path
 
     def train(self, image=None, odor=None, mech=None, alpn=None, reward=0.0, punish=0.0, pure=True, thr=0.0,
-              odor_left=None, odor_right=None, mech_left=None, mech_right=None, gated=True, hops=None, vpol="lum"):
-        """reward>0 (PAM: weakens avoid) / punish>0 (PPL1: weakens approach). Returns post-learning step().
+              odor_left=None, odor_right=None, mech_left=None, mech_right=None, gated=True, hops=None, vpol="lum",
+              stdp=False):
+        """stdp=True (spike mode only): trace-STDP in the sim loop replaces the
+        rate eligibility block below; DAN slab still applies (no 3rd factor yet).
+        reward>0 (PAM: weakens avoid) / punish>0 (PPL1: weakens approach). Returns post-learning step().
         gated=True: memory-protecting DAN - depression weighted by KC uniqueness against
         registered codes (x_remember): shared KC spared (x1.0), unique x0.85.
         No codes: legacy slab. gated=False: always legacy slab.
@@ -1826,8 +1858,12 @@ class FlyBrainAPI:
         idx, val, _ = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
                                   odor_left=odor_left, odor_right=odor_right,
                                   mech_left=mech_left, mech_right=mech_right, vpol=vpol)
-        if str(getattr(self, "_act", "relu")) == "spike":
-            h = self._forward_spike(idx, val)
+        _spk = str(getattr(self, "_act", "relu")) == "spike"
+        if _spk:
+            if stdp and pure:
+                h = self._forward_spike(idx, val, plastic=True)
+            else:
+                h = self._forward_spike(idx, val)
             kcs = h[self.KC]
         elif pure:
             h = self._forward_pure(idx, val, hops=hops, thr=thr) if self.mode in ("full", "banc", "mcns") \
@@ -1837,7 +1873,7 @@ class FlyBrainAPI:
             h = self._forward_full(idx, val) if self.mode in ("full", "banc", "mcns") else self._forward_mb(idx, val)
             kcs = h[self.KC].mean(axis=1)
         m = kcs >= np.sort(kcs)[-max(1, int(len(kcs)*0.05))]
-        if self.mode in ("full", "banc", "mcns") and reward != 0:
+        if self.mode in ("full", "banc", "mcns") and reward != 0 and not (_spk and stdp):
             a = h if pure else h.mean(axis=1).astype(np.float32)
             for s in range(0, self.E, self.CH):
                 e = slice(s, min(s+self.CH, self.E))

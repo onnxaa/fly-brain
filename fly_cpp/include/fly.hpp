@@ -196,10 +196,13 @@ public:
                                     const std::vector<float>& val,
                                     int hops, float thr);
     std::vector<float> forward_spike(const std::vector<int32_t>& idx,
-                                     const std::vector<float>& val);
+                                     const std::vector<float>& val,
+                                     bool plastic = false);
+    double stdp_Aplus = 0.005, stdp_Aminus = 0.0052, stdp_tau = 20.0;
     Out step(const Stim& s, int hops = -1, float thr = 0.0f);
     Out train(const Stim& s, float reward = 0.0f, float punish = 0.0f,
-              bool gated = true, int hops = -1, float thr = 0.0f);
+              bool gated = true, int hops = -1, float thr = 0.0f,
+              bool stdp = false);
     void sleep(int episodes = 1, float rate = 0.02f);
     void save_wbin(const std::string& path);
     void load_wbin(const std::string& path);

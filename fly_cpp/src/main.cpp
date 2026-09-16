@@ -29,6 +29,7 @@ int main(int argc, char** argv) {
     bool use_vnc = false;
     int steps = -1, test_n = -1, n_switch = -1;
     std::string scaling, img_bin; int imgH = 0, imgW = 0, vpol = 0;
+    bool stdp = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto need = [&](std::string& dst) { dst = argv[++i]; };
@@ -55,6 +56,7 @@ int main(int argc, char** argv) {
         else if (a == "--img-h") imgH = std::stoi(argv[++i]);
         else if (a == "--img-w") imgW = std::stoi(argv[++i]);
         else if (a == "--vpol") vpol = std::stoi(argv[++i]);
+        else if (a == "--stdp") stdp = true;
         else if (a[0] != '-') cmd = a;
     }
     if (cmd.empty()) { usage(); return 1; }
@@ -145,7 +147,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (cmd == "train") {
-        fly::Out o = b.train(s, reward, punish, true, hops, thr);
+        fly::Out o = b.train(s, reward, punish, true, hops, thr, stdp);
         if (!w_out.empty()) b.save_wbin(w_out);
         std::printf("MB_pref=%+.4f MB_app=%+.4f MB_avo=%+.4f KC_active=%d\n", o.MB_pref,
                     o.MB_app, o.MB_avo, o.KC_active);

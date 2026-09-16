@@ -151,7 +151,13 @@ Weights: C++ uses raw float32 `.wbin` (save/load_wbin), not Python `.npz`.
   exported as `<mode>_spike_apl/gset`, loaded per mode in C++ too. mcns SFA
   calibration mirrored (ainc=16): geosmin MBON ~4 Hz, KC 15% (was 521 Hz/100%).
   Spike uses Poisson drive — behavior-class parity by design, not bit-exact.
-  Plasticity works in spike too (same rules on measured Hz, no STDP):
+  Plasticity works in spike too (same rules on measured Hz, plus real
+  trace-STDP with --stdp: A+/A-=0.005/0.0052, tau 20ms, burn-excluded,
+  true spikes only, clip [0.05,650]; unsupervised Hebbian, valence still
+  in DAN slab). mb curves: plain 9.11->9.51->9.51 (saturates) vs STDP
+  8.97->9.45->9.72 (keeps climbing); mcns 1 trial +0.14->+0.74.
+  Python STDP validated too (mb 9.05->10.50->7.90, mcns +0.34/7.5min);
+  C++ is the practical path (OpenMP, seconds).
   sleep/clock are mode-agnostic; train() validated mb (9.05->9.67->7.83)
   and C++ mcns (+0.14->+0.49, fast — Python whole-brain spike-train is
   minutes per trial, use C++). True per-synapse STDP: open work.
