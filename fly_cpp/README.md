@@ -65,7 +65,8 @@ Prints `BANC_motor/legL/legR/imb/wing/neck` (intact brain→VNC chain, one
 animal). Measured (8 CPU): banc N=150k/E=11M load 0.9s step ~60ms train
 ~130ms; mcns N=165k/E=25.6M load 2.4s step ~166ms train ~384ms.
 Parity: banc geosmin MB +0.0532, mcns −4.3808, motor pools — all identical
-to Python. Batteries (tmaze/...) stay full-mode (FAFB-validated); bench
+to Python. `--vpol 1/2` (ON/OFF channels, bg 0.5): bit-exact too
+(ON bright 0.65201/0.62182, OFF dark 0.02949/0.08326). Batteries (tmaze/...) stay full-mode (FAFB-validated); bench
 works in every mode.
 
 ## Scaling regimes (`--scaling static|active`)
