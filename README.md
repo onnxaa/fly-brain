@@ -124,6 +124,12 @@ o = male.step(image=img)          # DN/legs respond, lateralized
 
 # spikes: own APL/graded sets per dataset (mcns pre-calibrated SFA)
 male.set_activation("spike"); o = male.step(odor="geosmin")  # Hz dict
+
+# EB ring attractor (banc validated, mcns functional/EXPERIMENTAL)
+banc.set_state(0.5)
+o = banc.step(cx_cue=cue50)      # landmark -> CX_bump lands (+/-6 ranks)
+o = banc.step()                  # dark: bump holds (CX_bump/CX_bump_amp)
+o = banc.step(angvel=3.0)        # velocity walks bump, correct sign
 ```
 
 Inputs combine freely: `odor` (DoOR name / 'A'/'B' / vector), `odor_left/right`,

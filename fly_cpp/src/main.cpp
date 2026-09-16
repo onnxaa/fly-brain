@@ -93,6 +93,7 @@ int main(int argc, char** argv) {
     if (cmd == "test-std") { fly::battery::test_std(data, mode); return 0; }
     if (cmd == "test-sleep") { fly::battery::test_sleep(data, mode); return 0; }
     if (cmd == "test-state") { fly::battery::test_state(data, mode); return 0; }
+    if (cmd == "test-attractor") { fly::battery::test_attractor(data, mode); return 0; }
     if (cmd == "bench") {
         fly::battery::bench(data, mode, steps > 0 ? steps : 5);
         return 0;

@@ -639,4 +639,71 @@ void bench(const std::string& data, const std::string& mode, int steps) {
                 (long long)ms(t5, t6));
 }
 
+// EB ring-attractor (mirrors test_attractor.py): rate cue/dark/av,
+// spike cue only (spike dark-hold/velocity = OPEN, see fly_api docs).
+static int cx_circ(int d, int n = 50) {
+    d %= n; if (d > n / 2) d -= n; if (d < -n / 2) d += n; return d;
+}
+void test_attractor(const std::string& data, const std::string& mode) {
+    int fails = 0;
+    auto check = [&](const std::string& name, bool ok, const std::string& info = "") {
+        std::printf("%s %s %s\n", ok ? "PASS" : "FAIL", name.c_str(), info.c_str());
+        if (!ok) fails++;
+    };
+    if (mode != "banc" && mode != "mcns") { std::printf("test-attractor needs banc/mcns\n"); return; }
+    int CNS_N = 50;
+    auto mkcue = [&](FlyBrain& b) {
+        std::vector<float> cue(b.CX_EPGv.size(), 0.0f);
+        for (size_t i = 0; i < b.CX_EPGv.size() && i < b.CX_wedge.size(); i++) {
+            int r = b.CX_wedge[i];
+            if (r >= 21 && r <= 23) cue[i] = 1.0f; // ranks 21..23 (asserted vs 22)
+        }
+        return cue;
+    };
+    // ---- rate ----
+    {
+        FlyBrain b(mode, data);
+        b.enable_scaling();
+        b.set_state(0.5f);
+        b.set_cx_gain();
+        Stim c; c.has_cx_cue = true; c.cx_cue = mkcue(b);
+        Out o = b.step(c); o = b.step(c);
+        check("rate-cue", std::abs(cx_circ(o.CX_bump - 22, CNS_N)) <= 6,
+              "bump=" + std::to_string(o.CX_bump));
+        Stim blank;
+        std::vector<int> d0;
+        for (int i = 0; i < 6; i++) d0.push_back(b.step(blank).CX_bump);
+        bool hold = true;
+        for (auto x : d0) if (std::abs(cx_circ(x - d0[0], CNS_N)) > 6) hold = false;
+        { std::string s; for (auto x : d0) s += std::to_string(x) + " "; check("rate-dark", hold, s); }
+        for (float AV : {3.0f, -3.0f}) {
+            FlyBrain b2(mode, data);
+            b2.enable_scaling(); b2.set_state(0.5f); b2.set_cx_gain();
+            Stim cc; cc.has_cx_cue = true; cc.cx_cue = mkcue(b2);
+            b2.step(cc); b2.step(cc);
+            std::vector<int> tr;
+            Stim av; av.angvel = AV;
+            for (int i = 0; i < 6; i++) tr.push_back(b2.step(av).CX_bump);
+            int disp = 0; // path integral (wrap-robust)
+            for (size_t i = 0; i + 1 < tr.size(); i++) disp += cx_circ(tr[i + 1] - tr[i], CNS_N);
+            bool ok = ((disp > 0) == (AV > 0)) && std::abs(disp) >= 4;
+            std::string s; for (auto x : tr) s += std::to_string(x) + " ";
+            check(std::string("rate-av") + (AV > 0 ? "+" : "-"), ok, s);
+        }
+    }
+    // ---- spike cue (recipe from test_attractor.py; dark/velocity OPEN) ----
+    if (mode == "banc") {
+        FlyBrain b(mode, data);
+        b.enable_scaling();
+        b.set_state(0.9f);
+        b.set_activation("spike");
+        b.set_cx_gain(1, 1, 2, 0.85f, 2.0f, 2.0f, 0.08f, 300.0f, 2.0f, 0.8f);
+        Stim c; c.has_cx_cue = true; c.cx_cue = mkcue(b);
+        Out o = b.step(c); o = b.step(c);
+        check("spike-cue", std::abs(cx_circ(o.CX_bump - 22, CNS_N)) <= 6 && o.CX_EPG > 0,
+              "bump=" + std::to_string(o.CX_bump) + " CX_EPG=" + std::to_string(o.CX_EPG));
+    }
+    std::printf(fails ? "FAILURES: %d\n" : "ALL PASS\n", fails);
+}
+
 }} // namespace fly::battery

@@ -67,6 +67,7 @@ void test_sleep(const std::string& data, const std::string& mode = "mb");
 
 // Stateful sequence discrimination (A->B vs B->A, X readout on 2nd step)
 void test_state(const std::string& data, const std::string& mode = "mb");
+void test_attractor(const std::string& data, const std::string& mode = "banc");
 
 // Microbenchmark: load + N in-process steps + train + sleep (ms per phase)
 void bench(const std::string& data, const std::string& mode, int steps = 5);

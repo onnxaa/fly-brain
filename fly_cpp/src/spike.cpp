@@ -8,13 +8,15 @@
 #include <cmath>
 #include <deque>
 #include <random>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace fly {
 
 std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
                                            const std::vector<float>& val,
-                                           bool plastic) {
+                                           bool plastic, float cx_av) {
     const int T = spike_T;
     const double V0 = -52.0, VRST = -52.0, VTH = -45.0, DT = 1.0;
     const double DEC_G = std::exp(-DT / 5.0), K_MBR = DT / 20.0;
@@ -50,6 +52,39 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
         graded.assign(nN, 0);
         for (auto g : spike_gset)
             if (g >= 0 && g < nN) graded[(size_t)g] = 1;
+    }
+    // CX spike loop gain (protocol): W_SYN calibrated for MB; single EPG
+    // spikes cannot recruit PEN (see fly_api._forward_spike docs). Frozen
+    // topology/signs/relative weights; global scalars only. Plus
+    // compartment-local fan equalization (homeostatic EB scaling).
+    // Defaults (1,1) = raw EM = bit-identical legacy.
+    if ((cx_spk_gain != 1.0f || cx_spk_inh != 1.0f) &&
+        (mode == "banc" || mode == "mcns") && sp_k2a_pre.empty()) {
+        if (cx_spk_cached_n != nN || (int)cx_eq.size() != (int)wX.size()) {
+            std::unordered_set<int32_t> cs;
+            for (auto id : CX_EPGv) cs.insert(id);
+            for (auto id : CX_D7) cs.insert(id);
+            for (auto id : CX_PEN) cs.insert(id);
+            std::vector<double> lf(nN, 0.0);
+            double sum = 0; int cnt = 0;
+            for (size_t e = 0; e < wX.size(); e++)
+                if (cs.count(pX[e]) && cs.count(qX[e])) {
+                    lf[(size_t)qX[e]] += std::fabs(wX[e]);
+                }
+            for (int i = 0; i < nN; i++)
+                if (lf[(size_t)i] > 0) { sum += lf[(size_t)i]; cnt++; }
+            double ref = cnt ? sum / cnt : 1.0;
+            cx_eq.assign(wX.size(), 1.0);
+            for (size_t e = 0; e < wX.size(); e++)
+                if (cs.count(pX[e]) && cs.count(qX[e]) && lf[(size_t)qX[e]] > 1e-9)
+                    cx_eq[e] = ref / lf[(size_t)qX[e]];
+            cx_spk_cached_n = nN;
+        }
+        for (size_t e = 0; e < wX.size(); e++) {
+            double eq = cx_eq[e];
+            if (eq == 1.0) continue;
+            wX[e] *= (wX[e] >= 0 ? cx_spk_gain : cx_spk_inh) * eq;
+        }
     }
     int64_t EX = (int64_t)pX.size();
     // CSR by pre for event propagation
@@ -109,6 +144,64 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
             didx.push_back(idx[i]);
             dval.push_back(i < val.size() ? val[i] : 0.0f);
         }
+    // CX spontaneous background (protocol, in-vivo resting rates; default 0)
+    bool cxmode = ((mode == "banc" || mode == "mcns") && sp_k2a_pre.empty());
+    if (cx_bg > 0 && cxmode) {
+        for (auto id : CX_EPGv) if (id >= 0 && id < nN) { didx.push_back(id); dval.push_back(cx_bg / 75.0); }
+        for (auto id : CX_D7) if (id >= 0 && id < nN) { didx.push_back(id); dval.push_back(cx_bg / 75.0); }
+        for (auto id : CX_PEN) if (id >= 0 && id < nN) { didx.push_back(id); dval.push_back(cx_bg / 75.0); }
+    }
+    // CX presynaptic depression resources + plateau potentials (protocol;
+    // CX-only, off by default). Masks cached by nN.
+    bool use_std = (cx_std_u > 0 && cxmode);
+    bool use_plat = (cx_plat_boost > 0 && cxmode);
+    if ((use_std || use_plat) && (int)cx_is_cx.size() != nN) {
+        cx_is_cx.assign(nN, 0); cx_is_plat.assign(nN, 0);
+        for (auto id : CX_EPGv) if (id >= 0 && id < nN) { cx_is_cx[(size_t)id] = 1; cx_is_plat[(size_t)id] = 1; }
+        for (auto id : CX_D7) if (id >= 0 && id < nN) cx_is_cx[(size_t)id] = 1;
+        for (auto id : CX_PEN) if (id >= 0 && id < nN) { cx_is_cx[(size_t)id] = 1; cx_is_plat[(size_t)id] = 1; }
+    }
+    if (use_std && ((int)cx_R.size() != nN || !carry))
+        cx_R.assign(nN, 1.0);
+    if (use_std)
+        for (int i = 0; i < nN; i++)
+            cx_R[(size_t)i] += (1.0 - cx_R[(size_t)i]) * (1.0 - std::exp(-T / cx_std_tau));
+    std::vector<int> cx_plat_ids;
+    if (use_plat) {
+        if ((int)cx_plat.size() != nN || !carry) cx_plat.assign(nN, 0.0);
+        else for (int i = 0; i < nN; i++) cx_plat[(size_t)i] *= state_leak;
+        for (int i = 0; i < nN; i++)
+            if (cx_is_plat[(size_t)i]) cx_plat_ids.push_back(i);
+    }
+    if (carry && cx_av != 0.0f && (mode == "banc" || mode == "mcns") &&
+        sp_k2a_pre.empty() && CX_EPGv.size() == CX_wedge.size() && !CX_EPGv.empty()) {
+        // EB velocity: rotate carried depolarization/conductance/adaptation/
+        // plateau along the EPG ring (same integrator as rate cx_loop)
+        ensure_cx();
+        if (!cx_ring_epg.empty()) {
+            int n = (int)cx_ring_epg.size();
+            float sh = std::fmod(cx_av, (float)n);
+            if (sh < 0) sh += n;
+            int i0 = ((int)std::floor(sh)) % n, i1 = (i0 + 1) % n;
+            float f = sh - std::floor(sh);
+            std::unordered_map<int32_t, int> gloc;
+            gloc.reserve((size_t)n * 2);
+            for (int k = 0; k < n; k++) gloc[cx_ring_epg[(size_t)k]] = k;
+            auto rot = [&](std::vector<double>& a, double base) {
+                std::vector<double> ring(n);
+                for (int k = 0; k < n; k++) ring[(size_t)k] = a[(size_t)cx_ring_epg[(size_t)k]] - base;
+                for (size_t p = 0; p < CX_EPGv.size(); p++) {
+                    auto it = gloc.find(CX_EPGv[p]);
+                    if (it == gloc.end()) continue;
+                    int k = it->second;
+                    a[(size_t)CX_EPGv[p]] =
+                        ((1 - f) * ring[(k - i0 + 2 * n) % n] + f * ring[(k - i1 + 2 * n) % n]) + base;
+                }
+            };
+            rot(v, V0); rot(gg, 0.0); rot(adapt, 0.0);
+            if (use_plat) rot(cx_plat, 0.0);
+        }
+    }
     std::vector<double> dp(didx.size());
     for (size_t i = 0; i < didx.size(); i++)
         dp[i] = dval[i] * spike_rmax / 2.0 * DT / 1000.0;
@@ -132,9 +225,12 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
     std::vector<double> tmp(nN);
     std::vector<int> fire_idx;
     fire_idx.reserve(4096);
+    bool use_plat_loop = use_plat && !cx_plat_ids.empty() && cx_plat_boost > 0;
     for (int t = 0; t < T; t++) {
         for (int i = 0; i < nN; i++) gg[(size_t)i] *= DEC_G;
         for (int i = 0; i < nN; i++) adapt[(size_t)i] *= DEC_A;
+        if (use_plat_loop)
+            for (int id : cx_plat_ids) v[(size_t)id] += cx_plat[(size_t)id] * cx_plat_boost;
         std::vector<double>& front = dq.front();
         for (int i = 0; i < nN; i++) gg[(size_t)i] += front[(size_t)i];
         dq.pop_front();
@@ -172,10 +268,15 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
             }
             if (!ev.empty()) {
                 std::vector<double>& back = dq.back();
-                for (int s : ev)
+                for (int s : ev) {
+                    double r = (use_std && s >= 0 && s < nN && cx_is_cx[(size_t)s]) ? cx_R[(size_t)s] : 1.0;
                     for (int64_t e = hpre[s]; e < hpre[s + 1]; e++)
-                        back[(size_t)cpost[(size_t)e]] += cw[(size_t)e] * W_SYN;
+                        back[(size_t)cpost[(size_t)e]] += cw[(size_t)e] * W_SYN * r;
+                }
             }
+            if (use_std)
+                for (int s : sp)
+                    if (s >= 0 && s < nN && cx_is_cx[(size_t)s]) cx_R[(size_t)s] *= (1.0 - cx_std_u);
             continue;
         }
         for (int s : sp) {
@@ -223,15 +324,29 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
         for (int s : rel) nrel[(size_t)s]++;
         if (!ev.empty()) {
             std::vector<double>& back = dq.back();
-            for (int s : ev)
+            for (int s : ev) {
+                double r = (use_std && s >= 0 && s < nN && cx_is_cx[(size_t)s]) ? cx_R[(size_t)s] : 1.0;
                 for (int64_t e = hpre[s]; e < hpre[s + 1]; e++)
-                    back[(size_t)cpost[(size_t)e]] += cw[(size_t)e] * W_SYN;
+                    back[(size_t)cpost[(size_t)e]] += cw[(size_t)e] * W_SYN * r;
+            }
         }
+        if (use_std)
+            for (int s : sp)
+                if (s >= 0 && s < nN && cx_is_cx[(size_t)s]) cx_R[(size_t)s] *= (1.0 - cx_std_u);
     }
     int win = std::max(1, T - BURN);
     if (state_leak > 0) {
         spk_v = v; spk_gg = gg; spk_adapt = adapt; spk_refr = refr;
         spk_dq0 = dq[0]; spk_dq1 = dq[1]; spk_nN = nN;
+    }
+    if (use_plat && state_leak > 0) {
+        if ((int)cx_plat.size() != nN) cx_plat.assign(nN, 0.0);
+        for (int i = 0; i < nN; i++) {
+            double rate = (double)(nsp[(size_t)i] + nrel[(size_t)i]) / win * 1000.0 / 30.0;
+            if (rate > 2.0) rate = 2.0;
+            double nv = 0.5 * cx_plat[(size_t)i] + 0.5 * rate;
+            cx_plat[(size_t)i] = cx_is_plat[(size_t)i] ? nv : 0.0;
+        }
     }
     std::vector<float> hz(N);
     for (int i = 0; i < N; i++) hz[(size_t)i] = (float)(nsp[(size_t)i] + nrel[(size_t)i]) / win * 1000.0f;

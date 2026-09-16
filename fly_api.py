@@ -195,8 +195,11 @@ class FlyBrainAPI:
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
             self.MOTOR_wing = np.asarray(r["wing"], dtype=np.int32)
             self.MOTOR_neck = np.asarray(r["neck"], dtype=np.int32)
-            for _k in ("EPG", "PFL", "PFL_L", "PFL_R", "PEN", "PFN", "EPG_wedge"):
+            for _k in ("EPG", "PFL", "PFL_L", "PFL_R", "PEN", "PEN_a", "PEN_b",
+                       "PEN_L", "PEN_R", "D7", "PFN", "EPG_wedge"):
                 setattr(self, "CX_" + _k, np.asarray(r[_k], dtype=np.int32) if _k in r else np.zeros(0, np.int32))
+            self.CX_ring_validated = bool(np.asarray(
+                r["CX_ring_validated"]).flat[0]) if "CX_ring_validated" in r else False
             self.CLOCK_M = np.asarray(r["CLOCK_M"], dtype=np.int32) if "CLOCK_M" in r else np.zeros(0, np.int32)
             self.CLOCK_E = np.asarray(r["CLOCK_E"], dtype=np.int32) if "CLOCK_E" in r else np.zeros(0, np.int32)
             self.GRN = np.asarray(r["GRN"], dtype=np.int32) if "GRN" in r else np.zeros(0, np.int32)
@@ -255,8 +258,11 @@ class FlyBrainAPI:
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
             self.MOTOR_wing = np.asarray(r["wing"], dtype=np.int32)
             self.MOTOR_neck = np.asarray(r["neck"], dtype=np.int32)
-            for _k in ("EPG", "PFL", "PFL_L", "PFL_R", "PEN", "PFN", "EPG_wedge"):
+            for _k in ("EPG", "PFL", "PFL_L", "PFL_R", "PEN", "PEN_a", "PEN_b",
+                       "PEN_L", "PEN_R", "D7", "PFN", "EPG_wedge"):
                 setattr(self, "CX_" + _k, np.asarray(r[_k], dtype=np.int32) if _k in r else np.zeros(0, np.int32))
+            self.CX_ring_validated = bool(np.asarray(
+                r["CX_ring_validated"]).flat[0]) if "CX_ring_validated" in r else False
             self.CLOCK_M = np.asarray(r["CLOCK_M"], dtype=np.int32) if "CLOCK_M" in r else np.zeros(0, np.int32)
             self.CLOCK_E = np.asarray(r["CLOCK_E"], dtype=np.int32) if "CLOCK_E" in r else np.zeros(0, np.int32)
             self.GRN = np.asarray(r["GRN"], dtype=np.int32) if "GRN" in r else np.zeros(0, np.int32)
@@ -654,8 +660,149 @@ class FlyBrainAPI:
             del con, comp, sup
         return None, None, c["ext"]
 
+    def set_cx_gain(self, gain=None, iters=None, gain_inh=None, leak=None, spk=None,
+                      std_u=None, std_tau=None, bg=None, plat=None):
+        """EB ring-attractor protocol (neuromodulatory tone + timescale).
+        Frozen FlyWire topology/signs/relative weights; only GLOBAL scalars:
+        gain (ACh EPG/PEN excitation), gain_inh (glutamate D7 inhibition;
+        (1.0,1.0) = raw EM ratios) and leak (CX-local carry = EB intrinsic
+        persistence; slow NMDA-like currents outlast AL/MB transients, hence
+        separate from the global leak). iters = recurrent passes per step
+        (2 converges dark-hold; 1 integrates faster but may limit-cycle).
+        gain=0 disables the loop. Returns (gain, gain_inh, iters, leak).
+        Defaults (1.0, 1.0, 2, 0.85): raw EM ratios - dark holds, av walks
+        the bump with correct sign (lumpy individual: ~1-2 ranks/step)."""
+        self._cx_armed = True
+        if gain is not None:
+            self._cx_gain = float(gain)
+        if gain_inh is not None:
+            self._cx_gain_inh = float(gain_inh)
+        if iters is not None:
+            self._cx_iters = int(iters)
+        if leak is not None:
+            self._cx_leak = float(leak)
+        if spk is not None:
+            self._cx_gain_spk = float(spk)
+            self._cx_spk_mask = None
+        if std_u is not None:
+            self._cx_std_u = float(std_u)
+        if std_tau is not None:
+            self._cx_std_tau = float(std_tau)
+        if bg is not None:
+            self._cx_bg = float(bg)
+        if plat is not None:
+            self._cx_plat_boost = float(plat)
+        # (spike E/I split: set _cx_gain_spk_inh directly; default 1.0)
+        return (float(getattr(self, "_cx_gain", 1.0)),
+                float(getattr(self, "_cx_gain_inh", 1.0)),
+                int(getattr(self, "_cx_iters", 2)),
+                float(getattr(self, "_cx_leak", 0.85)),
+                float(getattr(self, "_cx_gain_spk", 1.0)))
+
+    def _cx_loop(self, h, idx, val, thr=0.0, angvel=0.0):
+        """EB ring-attractor (banc/mcns rate only): rotation integrator +
+        recurrent maintenance. Carried EPG state is ROTATED by angvel ranks
+        (av>0 -> +ranks = left-turn convention, measured in data: PEN_a-left
+        +1.54, PEN_b-left +1.47, PEN_a-right +0.35, PEN_b-right -0.49 ranks;
+        left PEN pushes the bump +) then
+        maintained by K recurrent passes over the frozen EPG+D7+PEN subgraph
+        (same equation as _forward_pure: fan-norm, gain-scaled). Rotation
+        models the PEN offset-projection shift function; maintenance uses
+        the real weights. No-op outside banc/mcns or when gain=0."""
+        if self.mode not in ("banc", "mcns"):
+            return h
+        if not getattr(self, "_cx_armed", False):
+            return h  # legacy assays: zero behavior change
+        G = float(getattr(self, "_cx_gain", 1.0))
+        GI = float(getattr(self, "_cx_gain_inh", 1.0))
+        K = int(getattr(self, "_cx_iters", 2))
+        epg = np.asarray(getattr(self, "CX_EPG", []), dtype=np.int32)
+        if not len(epg) or G == 0 or K <= 0:
+            return h
+        import numpy as _np
+        if (getattr(self, "_cx_nodes", None) is None or
+                len(getattr(self, "_cx_nodes", [])) == 0):
+            d7 = np.asarray(getattr(self, "CX_D7", []), dtype=np.int32)
+            pen = np.asarray(getattr(self, "CX_PEN", []), dtype=np.int32)
+            cx = _np.unique(_np.concatenate([epg, d7, pen])).astype(np.int32)
+            cx = cx[(cx >= 0) & (cx < self.N)]
+            cs = set(int(c) for c in cx)
+            m = _np.isin(self.pre, list(cs)) & _np.isin(self.post, list(cs))
+            self._cx_nodes = cx
+            self._cx_pre = self.pre[m].astype(np.int32)
+            self._cx_post = self.post[m].astype(np.int32)
+            self._cx_sw = (self.wM[m] * self.sign[m]).astype(_np.float32)
+            print(f"cx_loop: {len(cx)} neurons, {int(m.sum())} edges (EPG+D7+PEN)", flush=True)
+        cx = self._cx_nodes
+        # global ids -> local (cx sorted unique)
+        lp = _np.searchsorted(cx, self._cx_pre)
+        lq = _np.searchsorted(cx, self._cx_post)
+        ext = _np.zeros(len(cx), dtype=_np.float32)
+        _ii = _np.asarray(idx, dtype=np.int32)
+        _vv = _np.asarray(val, dtype=np.float32)
+        _ok = _np.isin(_ii, cx)
+        if _ok.any():
+            _np.add.at(ext, _np.searchsorted(cx, _ii[_ok]), _vv[:len(_ii)][_ok])
+        # CX-local carry: EB holds its own persistent state (bypasses the
+        # base-forward washout - global fan dilution erases carried bumps).
+        # x_init = stimulus drive + leak * previous CX state.
+        _lk = float(getattr(self, "_cx_leak", 0.85) or 0.0)
+        _cp = getattr(self, "_cx_prev", None)
+        if _lk > 0 and _cp is not None and len(_cp) == len(cx):
+            x = (ext + _lk * _cp).astype(_np.float32)
+            av = float(angvel or 0.0)
+            if av != 0.0:
+                # rotate carried EPG bump along ring order (linear interp
+                # for fractional ranks); D7/PEN rest are rotation-neutral.
+                epg = np.asarray(getattr(self, "CX_EPG", []), dtype=np.int32)
+                wo = np.asarray(getattr(self, "CX_EPG_wedge", []), dtype=np.int32)
+                if len(epg) == len(wo) and len(epg):
+                    order = _np.argsort(wo, kind="stable")
+                    inv = _np.zeros(len(epg), dtype=np.int32)
+                    inv[order] = _np.arange(len(epg))
+                    epos = _np.searchsorted(cx, epg)
+                    ring = x[epos][order]
+                    n = len(ring)
+                    sh = av % n
+                    i0 = int(_np.floor(sh)) % n
+                    f = sh - _np.floor(sh)
+                    ring = ((1.0 - f) * _np.roll(ring, i0) +
+                            f * _np.roll(ring, (i0 + 1) % n))
+                    x[epos] = (ext[epos] * 0.0 +
+                               ring[inv] * _lk + ext[epos])
+                    # NOTE: ext added once below for all cx; EPG part
+                    # already includes ext here, so zero it there.
+                    ext[epos] = 0.0
+        else:
+            x = h[cx].astype(_np.float32).copy() + ext * 0.0
+            # h[cx] already contains this step's stimulus drive; ext equals
+            # it on CX (re-clamped below each iter), so start from h[cx].
+        sw = self._cx_sw
+        is_inh = (sw < 0).astype(_np.float32)  # D7 glutamate edges
+        w_exc = _np.abs(sw) * (1.0 - is_inh) * _np.float32(G)
+        w_inh = _np.abs(sw) * is_inh * _np.float32(GI)
+        # STATIC fan (homeostatic/synaptic-scaling equalization, same as
+        # the base forward): every CX neuron normalized by TOTAL anatomical
+        # input weight, so heterogeneous totals (PEN_in 13..260 per EPG) do
+        # not become 20x excitability differences. G/GI set loop gain + E/I
+        # tone (neuromodulation); active-fan instead AMPLIFIES heterogeneity
+        # into teleporting wells (measured).
+        fan = self._fan[cx].astype(_np.float32) + 1e-6
+        for _ in range(K):
+            agg = _np.zeros(len(cx), dtype=_np.float32)
+            _np.add.at(agg, lq, x[lp] * (w_exc - w_inh))
+            agg /= fan
+            x = self._activate(agg - thr).astype(_np.float32) + ext
+        h = h.copy()
+        h[cx] = x
+        self._cx_prev = x.copy()
+        if len(getattr(self, "_hprev", np.zeros(0))) == self.N:
+            self._hprev = h.astype(np.float32)
+        return h
+
     def _forward_spike(self, idx, val, Tms=None, seed=None, plastic=False,
-                       stdp_Aplus=0.005, stdp_Aminus=0.0052, stdp_tau=20.0):
+                       stdp_Aplus=0.005, stdp_Aminus=0.0052, stdp_tau=20.0,
+                       cx_av=0.0):
         """LIF spiking forward (test_lif v2 1:1): Poisson drive from encode
         (rate = val*75Hz, so val 2.0 = 150Hz like DoOR R150 / RMAX150),
         g-reset, 2-step refractory/delay, signed weights, APL x4, graded
@@ -691,10 +838,66 @@ class FlyBrainAPI:
             gg_idx = np.asarray(gset, dtype=np.int32)
             gg_idx = gg_idx[gg_idx < nN]
             graded[gg_idx] = True
+        # CX spike loop gain (protocol): W_SYN was calibrated for MB
+        # (test_lif); single EPG spikes (~2.75mV) cannot recruit PEN (7mV
+        # threshold, ~2 coincident inputs/ms available) so the EB loop gain
+        # is <1 and any bump dies in ms. G scales CX->CX event weights
+        # (frozen topology/signs/relative weights; global scalar like
+        # spike_wdrv/ainc per-mode calibrations). Default 1.0 = raw EM.
+        _cxg = float(getattr(self, "_cx_gain_spk", 1.0) or 0.0)
+        _cxgi = float(getattr(self, "_cx_gain_spk_inh", 1.0) or 0.0)
+        if (_cxg != 1.0 or _cxgi != 1.0) and self.mode in ("banc", "mcns") and ext is None:
+            _cm = getattr(self, "_cx_spk_mask", None)
+            if _cm is None or len(_cm[0]) != len(w):
+                _cxset = set(int(c) for c in
+                               list(getattr(self, "CX_EPG", [])) +
+                               list(getattr(self, "CX_D7", [])) +
+                               list(getattr(self, "CX_PEN", [])))
+                _is = np.isin(pre, list(_cxset)) & np.isin(post, list(_cxset))
+                # compartment-local fan: sum |w| over CX->CX in-edges only.
+                # Global fan is dominated by SILENT ER/visual weights, so it
+                # does NOT equalize the EB loop (PEN_in varies 13..260 per
+                # EPG -> 20x wells). EB neurons homeostatically scale EB
+                # inputs (compartment-specific scaling is biological); divide
+                # them out so wells flatten and rotation can integrate.
+                _lf = np.zeros(nN, np.float64)
+                np.add.at(_lf, post[_is], np.abs(w[_is]))
+                _ref = float(_lf[_lf > 0].mean())
+                _eq = np.ones(len(w), np.float64)
+                _eq[_is] = _ref / np.maximum(_lf[post[_is]], 1e-9)
+                self._cx_spk_mask = (_is & (w > 0), _is & (w < 0), _eq)
+                _cm = self._cx_spk_mask
+            w = w.copy()
+            w[_cm[0]] *= _cxg * _cm[2][_cm[0]]
+            w[_cm[1]] *= _cxgi * _cm[2][_cm[1]]
         _lk = float(getattr(self, "_state_leak", 0.0) or 0.0)
         _st = getattr(self, "_spk_state", None)
         _carry = (_lk > 0 and isinstance(_st, dict) and _st.get("nN") == nN
                   and len(_st.get("v", ())) == nN)
+        # CX plateau potential (slow variable the ms-LIF lacks): per-neuron
+        # tonic depolarization from recent firing (NMDA/Ca-plateau-like;
+        # EPG show plateau persistent firing in vivo). EMA of spike rate in
+        # val units, decayed by leak (= inter-trial gap), injected as
+        # v += p*BOOST each ms. CX-only. Default BOOST 0 = off.
+        _pboost = float(getattr(self, "_cx_plat_boost", 0.0) or 0.0)
+        _plat = None
+        _platmask = None
+        if (_pboost > 0 and self.mode in ("banc", "mcns") and ext is None):
+            # plateau in PRINCIPAL (excitatory EPG/PEN) neurons only:
+            # fast-spiking inhibitory interneurons (D7) lack plateau
+            # potentials, so D7 gets none (else E/I cancel and net = 0).
+            _platmask = getattr(self, "_cx_plat_mask", None)
+            if _platmask is None or len(_platmask) != nN:
+                _platmask = np.zeros(nN, bool)
+                for _pool in ("CX_EPG", "CX_PEN"):
+                    _pp = np.asarray(getattr(self, _pool, []), dtype=np.int32)
+                    _pp = _pp[_pp < nN]
+                    _platmask[_pp] = True
+                self._cx_plat_mask = _platmask
+            if _carry and _st.get("plat") is not None and len(_st["plat"]) == nN:
+                _plat = (_st["plat"] * _lk).astype(np.float64)
+            else:
+                _plat = np.zeros(nN, np.float64)
         v = np.full(nN, V0, np.float64)
         vth = np.full(nN, VTH, np.float64)
         if len(apl_idx):
@@ -708,6 +911,31 @@ class FlyBrainAPI:
             gg = _st["gg"] * _lk
             adapt = _st["adapt"] * _lk
             refr = _st["refr"].copy()
+            av = float(cx_av or 0.0)
+            if av != 0.0 and self.mode in ("banc", "mcns"):
+                # EB velocity: rotate carried depolarization/conductance/
+                # adaptation patterns along the EPG ring (same integrator as
+                # rate _cx_loop; LIF state is the bump medium here).
+                epg = np.asarray(getattr(self, "CX_EPG", []), dtype=np.int32)
+                wo = np.asarray(getattr(self, "CX_EPG_wedge", []), dtype=np.int32)
+                epg = epg[epg < nN]
+                if len(epg) and len(wo) == len(getattr(self, "CX_EPG", [])):
+                    wo = wo[np.asarray(getattr(self, "CX_EPG", [])) < nN]
+                    order = np.argsort(wo, kind="stable")
+                    inv = np.zeros(len(epg), dtype=np.int32)
+                    inv[order] = np.arange(len(epg))
+                    n = len(epg)
+                    sh = av % n
+                    i0 = int(np.floor(sh)) % n
+                    f = sh - np.floor(sh)
+                    for arr, base in ((v, V0), (gg, 0.0), (adapt, 0.0),
+                                       (_plat, 0.0) if _plat is not None else (None, 0.0)):
+                        if arr is None:
+                            continue
+                        ring = (arr[epg][order] - base)
+                        ring = ((1.0 - f) * np.roll(ring, i0) +
+                                f * np.roll(ring, (i0 + 1) % n))
+                        arr[epg] = ring[inv] + base
         dq = deque([np.zeros(nN, np.float64) for _ in range(2)])
         if _carry:
             dq = deque([_st["dq0"] * _lk, _st["dq1"] * _lk])
@@ -722,9 +950,43 @@ class FlyBrainAPI:
         didx = np.asarray(idx, dtype=np.int32)
         didx = didx[didx < nN]
         dval = np.asarray(val, dtype=np.float64)[:len(didx)] if len(didx) else np.zeros(0)
+        # CX spontaneous background (protocol): in vivo EPG/PEN/D7 fire at
+        # rest (~5-15Hz); absolute Poisson silence (dp=0) is unbiological and
+        # makes every dark window un-ignitable. bg = Hz added to all CX
+        # neurons (val units: rate = val*75Hz). Default 0 = off.
+        _cxbg = float(getattr(self, "_cx_bg", 0.0) or 0.0)
+        if _cxbg > 0 and self.mode in ("banc", "mcns") and ext is None:
+            _cxp = np.concatenate([np.asarray(getattr(self, _p, []), dtype=np.int32)
+                                   for _p in ("CX_EPG", "CX_D7", "CX_PEN")])
+            _cxp = _cxp[_cxp < nN]
+            if len(_cxp):
+                didx = np.concatenate([didx, _cxp])
+                dval = np.concatenate([dval, np.full(len(_cxp), _cxbg / 75.0)])
         # Poisson drive: rate = val/2*rmax (val 2.0 = rmax, test_lif R150).
         dp = dval * float(getattr(self, "_spike_rmax", 150.0)) / 2.0 * DT / 1000.0
         G = np.where(graded)[0]
+        # CX presynaptic depression (vesicle depletion): per-neuron resource
+        # R in (0,1]; each true spike scales its outgoing events by R[pre]
+        # then depletes R[pre] *= 1-u; recovers toward 1 with tau_rec.
+        # CX-ONLY (EB synapses depress strongly; MB dynamics elsewhere
+        # untouched -> published PASS numbers safe). Off when u=0.
+        _std_u = float(getattr(self, "_cx_std_u", 0.0) or 0.0)
+        _std_tau = float(getattr(self, "_cx_std_tau", 300.0) or 300.0)
+        _cxpm = None
+        _cxR = None
+        if _std_u > 0 and self.mode in ("banc", "mcns") and ext is None:
+            _cxpm = getattr(self, "_cx_pre_mask", None)
+            if _cxpm is None or len(_cxpm) != nN:
+                _cxpm = np.zeros(nN, bool)
+                for _pool in ("CX_EPG", "CX_D7", "CX_PEN"):
+                    _pp = np.asarray(getattr(self, _pool, []), dtype=np.int32)
+                    _pp = _pp[_pp < nN]
+                    _cxpm[_pp] = True
+                self._cx_pre_mask = _cxpm
+            _cxR = getattr(self, "_cx_R", None)
+            if _cxR is None or len(_cxR) != nN or not _carry:
+                _cxR = np.ones(nN, np.float64)
+            _cxR += (1.0 - _cxR) * (1.0 - float(np.exp(-T / _std_tau)))
         rng = np.random.default_rng([seed, _calls] if _carry else seed)
         # sensory adaptation (ORN/R adapt in ~100ms; without it sustained
         # 150Hz Poisson piles 50mV+ into g and the brain saturates or dies -
@@ -742,6 +1004,8 @@ class FlyBrainAPI:
         for t in range(T):
             gg *= DEC_G
             adapt *= DEC_A
+            if _plat is not None:
+                v[_platmask] += _plat[_platmask] * _pboost
             gg += dq.popleft()
             dq.append(np.zeros(nN, np.float64))
             if len(didx):
@@ -770,8 +1034,15 @@ class FlyBrainAPI:
                 if len(ev):
                     m = np.isin(pre, ev)
                     if m.any():
-                        dq[-1] += np.bincount(post[m], weights=(w[m] * W_SYN).astype(np.float64),
+                        _w = (w[m] * W_SYN).astype(np.float64)
+                        if _cxR is not None:
+                            _pmm = _cxpm[pre[m]]
+                            _w[_pmm] *= _cxR[pre[m][_pmm]]
+                        dq[-1] += np.bincount(post[m], weights=_w,
                                               minlength=nN)
+                        if _cxR is not None and len(sp):
+                            _sp = np.asarray(sp)
+                            _cxR[_sp[_sp < nN]] *= (1.0 - _std_u)
                 continue
             if len(sp):
                 v[sp] = VRST
@@ -806,13 +1077,27 @@ class FlyBrainAPI:
             if len(ev):
                 m = np.isin(pre, ev)
                 if m.any():
-                    dq[-1] += np.bincount(post[m], weights=(w[m] * W_SYN).astype(np.float64),
+                    _w = (w[m] * W_SYN).astype(np.float64)
+                    if _cxR is not None:
+                        _pmm = _cxpm[pre[m]]
+                        _w[_pmm] *= _cxR[pre[m][_pmm]]
+                    dq[-1] += np.bincount(post[m], weights=_w,
                                           minlength=nN)
+                    if _cxR is not None and len(sp):
+                        _sp = np.asarray(sp)
+                        _cxR[_sp[_sp < nN]] *= (1.0 - _std_u)
         _win = max(1, T - BURN)
         if _lk > 0:
             self._spk_state = {"nN": nN, "v": v.copy(), "gg": gg.copy(),
                                "adapt": adapt.copy(), "refr": refr.copy(),
                                "dq0": np.asarray(dq[0]), "dq1": np.asarray(dq[1])}
+            if _cxR is not None:
+                self._cx_R = _cxR.copy()
+            if _plat is not None:
+                _prate = np.clip((nsp + nrel) / _win * 1000.0 / 30.0, 0.0, 2.0)
+                _plat = (0.5 * _plat + 0.5 * _prate)
+                _plat[~_platmask] = 0.0
+                self._spk_state["plat"] = _plat.copy()
         return (nsp + nrel) / _win * 1000.0
 
     # ---- sensors ----
@@ -896,7 +1181,7 @@ class FlyBrainAPI:
         return oi[keep], ov[keep]
 
     def encode(self, image=None, odor=None, mech=None, alpn=None, odor_left=None, odor_right=None,
-               mech_left=None, mech_right=None, vpol="lum"):
+               mech_left=None, mech_right=None, vpol="lum", cx_cue=None, angvel=0.0):
         """Returns (idx, val, info): info has 'motion' when motion was computed."""
         info = {}
         idx, val = [], []
@@ -974,6 +1259,26 @@ class FlyBrainAPI:
                 o = np.asarray(md, dtype=np.float32)
                 n = min(len(o), len(side))
                 idx.append(side[:n]); val.append((o[:n]*2.0).astype(np.float32))
+        if cx_cue is not None or (angvel is not None and float(angvel) != 0.0):
+            # EB ring-attractor protocol (banc/mcns only): cx_cue = vector
+            # over the CX_EPG pool (landmark already processed by ER ring
+            # neurons), current injection like mech/vector drives.
+            # angvel = angular velocity in ring-ranks/step; applied in
+            # _cx_loop as rotation of the carried EPG bump (direction from
+            # PEN data: av>0 = +ranks, same sign as left-PEN shift).
+            if self.mode not in ("banc", "mcns") or not len(getattr(self, "CX_EPG", [])):
+                raise ValueError("cx_cue/angvel require mode='banc'/'mcns' (CX pools)")
+            self._cx_armed = True
+            if cx_cue is not None:
+                c = np.asarray(cx_cue, dtype=np.float32)
+                epg = np.asarray(self.CX_EPG, dtype=np.int32)
+                n = min(len(c), len(epg))
+                idx.append(epg[:n]); val.append((c[:n] * 2.0).astype(np.float32))
+            # NOTE: angvel is NOT injected as PEN current (measured: any PEN
+            # pattern - even unilateral 0.1 - collapses the bump into
+            # PEN-imposed WTA wells via PEN->EPG x13 weights; the winner is
+            # the input pattern, not the carried heading). Velocity enters in
+            # _cx_loop as rotation of the carried EPG state (see below).
         if image is not None:
             if not len(getattr(self, "R", [])):
                 raise ValueError("images require R photoreceptors (full/banc/mcns, not mb)")
@@ -1170,6 +1475,8 @@ class FlyBrainAPI:
         self._hprev = np.zeros(self.N, dtype=np.float32)
         self._spk_state = None
         self._spk_calls = 0
+        self._cx_prev = None
+        self._cx_R = None
         return True
 
 
@@ -1315,7 +1622,8 @@ class FlyBrainAPI:
         return self._base
 
     def step(self, image=None, odor=None, mech=None, alpn=None, hops=None, pure=None, thr=0.0,
-             odor_left=None, odor_right=None, mech_left=None, mech_right=None, vpol="lum"):
+             odor_left=None, odor_right=None, mech_left=None, mech_right=None, vpol="lum",
+             cx_cue=None, angvel=0.0):
         # NOTE timescales: one step = 1 behavioral trial (seconds-minutes). The clock ticks
         # ONLY via tick_clock() - otherwise a 10Hz mob would spin a day in 2s.
         # hops=None -> self._hops (set_hops); mb default 1, full default 2.
@@ -1325,7 +1633,8 @@ class FlyBrainAPI:
             hops = int(hops)
         idx, val, info = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
                                      odor_left=odor_left, odor_right=odor_right,
-                                     mech_left=mech_left, mech_right=mech_right, vpol=vpol)
+                                     mech_left=mech_left, mech_right=mech_right, vpol=vpol,
+                                     cx_cue=cx_cue, angvel=angvel)
         _st = getattr(self, "_std", None)
         if _st is not None and _st["alpha"] > 0:
             idx, val = self._apply_std(idx, val, _st["alpha"], _st["tau"])
@@ -1336,12 +1645,15 @@ class FlyBrainAPI:
             raise ValueError("spike mode has no pure=False legacy; use relu/lif for that")
         if spike:
             # full LIF sim: same dict in Hz (hops/T ignored except Tms window).
-            h = self._forward_spike(idx, val)
+            h = self._forward_spike(idx, val, cx_av=float(angvel or 0.0))
         elif pure:
             h = self._forward_pure(idx, val, hops=hops, thr=thr) if self.mode in ("full", "banc", "mcns") \
                 else self._forward_pure_mb(idx, val, hops=hops, thr=thr)
         else:
             h = self._forward_full(idx, val, hops=hops) if self.mode in ("full", "banc", "mcns") else self._forward_mb(idx, val)
+        if not spike and pure:
+            h = self._cx_loop(h, idx, val, thr=thr,
+                              angvel=float(angvel or 0.0))
         kcs = h[self.KC] if (pure or spike) else h[self.KC].mean(axis=1)
         m = kcs >= np.sort(kcs)[-max(1, int(len(kcs)*0.05))]
         ks = (kcs*m).astype(np.float32)
@@ -1393,15 +1705,21 @@ class FlyBrainAPI:
                 out["DN_L"] = float(h[self.DESC_L].mean()); out["DN_R"] = float(h[self.DESC_R].mean())
                 out["turn"] = float(out["DN_L"]-out["DN_R"])  # >0 turn left (convention)
             if self.mode in ("banc", "mcns"):
-                # central complex: EPG bump (wedge order, banc) + PFL steering.
-                # MCNS PFL side by DESC-output wiring (no side metadata);
-                # no EPG wedge order in MCNS (homology too sparse) -> mean only.
+                # central complex: EPG bump (wedge order; banc = EB-coordinate
+                # validated, mcns = functional EXPERIMENTAL) + PFL steering.
+                # MCNS PFL side by DESC-output wiring (no side metadata).
                 _epg = getattr(self, "CX_EPG", np.zeros(0, np.int32))
                 _wo = getattr(self, "CX_EPG_wedge", np.zeros(0, np.int32))
                 if len(_epg):
                     _e = h[_epg].astype(np.float64)
                     out["CX_EPG"] = float(_e.mean())
-                    out["CX_bump"] = int(np.argmax(_e[_wo])) if len(_wo) == len(_epg) else -1
+                    if len(_wo) == len(_epg):
+                        _ord = np.argsort(_wo, kind="stable")
+                        out["CX_bump"] = int(np.argmax(_e[_ord]))
+                        out["CX_bump_amp"] = float(_e[_ord].max() / (_e.mean() + 1e-9))
+                    else:
+                        out["CX_bump"] = -1
+                        out["CX_bump_amp"] = 0.0
                 _pl = getattr(self, "CX_PFL_L", np.zeros(0, np.int32))
                 _pr = getattr(self, "CX_PFL_R", np.zeros(0, np.int32))
                 if len(_pl) and len(_pr):

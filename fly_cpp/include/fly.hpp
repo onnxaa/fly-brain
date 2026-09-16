@@ -23,6 +23,10 @@ struct Stim {
     std::vector<float> mech_right; bool has_mech_right = false;
     std::vector<float> image; int imgH = 0, imgW = 0; bool has_image = false;
     int vpol = 0; // 0=lum legacy, 1=on (L1 increments), 2=off (L2 decrements)
+    // EB ring-attractor protocol (banc/mcns): cx_cue = vector over CX_EPG
+    // pool (visual landmark); angvel = angular velocity in ring-ranks/step
+    std::vector<float> cx_cue; bool has_cx_cue = false;
+    float angvel = 0.0f;
 };
 
 struct Out {
@@ -40,7 +44,7 @@ struct Out {
     float BANC_wing = 0, BANC_neck = 0;
     bool has_bcmotor = false;
     float CX_EPG = 0, CX_PFL_L = 0, CX_PFL_R = 0, CX_turn = 0;
-    int CX_bump = -1; bool has_cx = false;
+    int CX_bump = -1; float CX_bump_amp = 0; bool has_cx = false;
     // real VNC (MANC) readouts, valid when has_vnc
     float VNC_desc_mean = 0, VNC_motor = 0;
     float VNC_leg_L = 0, VNC_leg_R = 0, VNC_leg_imb = 0;
@@ -90,6 +94,26 @@ public:
     std::vector<int32_t> DESC_L, DESC_R, R, VIS_eye;
     std::vector<int32_t> R_L, R_R, L1v, L2v, Rret, R_LU, R_RU;
     std::vector<int32_t> CX_EPGv, CX_PFL, CX_PFL_L, CX_PFL_R, CX_wedge;
+    std::vector<int32_t> CX_PEN, CX_PENa, CX_PENb, CX_PEN_L, CX_PEN_R, CX_D7;
+    int CX_validated = 0;
+    // EB ring-attractor protocol state (neuromodulatory tone + timescale;
+    // frozen FlyWire topology/signs; see fly_api.set_cx_gain docs)
+    bool cx_armed = false;
+    float cx_gain = 1.0f, cx_gain_inh = 1.0f;
+    int cx_iters = 2; float cx_leak = 0.85f;
+    // cx subgraph cache (EPG+D7+PEN): sorted nodes, local pre/post, weights
+    std::vector<int32_t> cx_nodes, cx_lpre, cx_lpost, cx_order, cx_ring_epg;
+    std::vector<float> cx_sw;
+    std::vector<int> cx_eloc; // epg pool position -> ring rank
+    std::vector<float> cx_prev;
+    int cx_cached_n = -1;
+    // spike CX protocol (defaults off = bit-identical legacy)
+    float cx_spk_gain = 1.0f, cx_spk_inh = 1.0f;
+    float cx_std_u = 0.0f, cx_std_tau = 300.0f, cx_bg = 0.0f, cx_plat_boost = 0.0f;
+    std::vector<double> cx_R, cx_plat;
+    std::vector<char> cx_is_cx, cx_is_plat;
+    std::vector<double> cx_eq; // compartment-local fan equalization
+    int cx_spk_cached_n = -1;
     std::vector<float> Rret_cx, Rret_cy;
     std::vector<float> L1cx, L1cy, L2cx, L2cy;
     // whole-CNS (banc/mcns) motor pools
@@ -171,6 +195,10 @@ public:
     void set_hops(int h); int get_hops() const;
     void set_scaling(const std::string& s); std::string get_scaling() const;
     float set_state(float leak); void reset_state();
+    void set_cx_gain(float gain = 1.0f, float gain_inh = 1.0f, int iters = 2,
+                     float leak = 0.85f, float spk = 1.0f, float spk_inh = 1.0f,
+                     float std_u = 0.0f, float std_tau = 300.0f, float bg = 0.0f,
+                     float plat = 0.0f);
     void set_activation(const std::string& name, float sat = 2.0f, int Tms = 200,
                         int seed = 7, float wdrv = 68.75f, float ainc = -1,
                         float rmax = 150.0f, float adapt = -1, int burn = -1);
@@ -197,9 +225,15 @@ public:
     std::vector<float> forward_pure(const std::vector<int32_t>& idx,
                                     const std::vector<float>& val,
                                     int hops, float thr);
+    // EB ring-attractor (banc/mcns rate): rotation integrator + maintenance
+    void ensure_cx();
+    std::vector<float> cx_loop(const std::vector<float>& h,
+                               const std::vector<int32_t>& idx,
+                               const std::vector<float>& val,
+                               float thr, float angvel);
     std::vector<float> forward_spike(const std::vector<int32_t>& idx,
                                      const std::vector<float>& val,
-                                     bool plastic = false);
+                                     bool plastic = false, float cx_av = 0.0f);
     double stdp_Aplus = 0.005, stdp_Aminus = 0.0052, stdp_tau = 20.0;
     // spike inter-step state (set_state leak>0 only; exact continuation)
     std::vector<double> spk_v, spk_gg, spk_adapt, spk_dq0, spk_dq1;

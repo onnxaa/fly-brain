@@ -7,6 +7,7 @@
 #include <cstring>
 #include <numeric>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace fly {
@@ -107,8 +108,16 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         try {
             CX_EPGv = need(p+"_CX_EPG"); CX_PFL = need(p+"_CX_PFL");
             CX_PFL_L = need(p+"_CX_PFL_L"); CX_PFL_R = need(p+"_CX_PFL_R");
+            CX_PEN = need(p+"_CX_PEN");
+        } catch (...) {}
+        try {
+            CX_PENa = need(p+"_CX_PEN_a"); CX_PENb = need(p+"_CX_PEN_b");
+            CX_PEN_L = need(p+"_CX_PEN_L"); CX_PEN_R = need(p+"_CX_PEN_R");
+            CX_D7 = need(p+"_CX_D7");
         } catch (...) {}
         try { CX_wedge = need(p+"_CX_EPG_wedge"); } catch (...) {}
+        try { auto _v = need(p+"_CX_validated"); CX_validated = _v.empty()?0:(int)_v[0]; }
+        catch (...) {}
         R = need(p+"_R");
         try { R_cx = LF(p+"_R_cx"); R_cy = LF(p+"_R_cy"); } catch (...) {}
         try { R_L = L32(p+"_R_L"); R_R = L32(p+"_R_R"); } catch (...) {}
@@ -391,11 +400,22 @@ float FlyBrain::set_state(float leak) {
     if ((int)f_prev.size() != N) f_prev.assign((size_t)N, 0.0f);
     return state_leak;
 }
+void FlyBrain::set_cx_gain(float gain, float gain_inh, int iters,
+                            float leak, float spk, float spk_inh,
+                            float std_u, float std_tau, float bg, float plat) {
+    cx_armed = true;
+    cx_gain = gain; cx_gain_inh = gain_inh; cx_iters = iters; cx_leak = leak;
+    cx_spk_gain = spk; cx_spk_inh = spk_inh;
+    cx_std_u = std_u; cx_std_tau = std_tau; cx_bg = bg; cx_plat_boost = plat;
+    cx_cached_n = -1; cx_spk_cached_n = -1; // rebuild masks
+}
+
 void FlyBrain::reset_state() {
     f_prev.assign((size_t)N, 0.0f);
     spk_v.clear(); spk_gg.clear(); spk_adapt.clear();
     spk_dq0.clear(); spk_dq1.clear(); spk_refr.clear();
     spk_calls = 0; spk_nN = -1;
+    cx_prev.clear(); cx_R.clear(); cx_plat.clear();
 }
 
 void FlyBrain::set_activation(const std::string& name, float sat, int Tms, int seed,
@@ -600,6 +620,15 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
             for (size_t i=0;i<n;i++){idx.push_back(MECH_R[i]);val.push_back(s.mech_right[i]*2.0f);}
         }
     }
+    if (s.has_cx_cue && !s.cx_cue.empty()) {
+        if ((mode != "banc" && mode != "mcns") || CX_EPGv.empty())
+            throw std::runtime_error("cx_cue/angvel require mode='banc'/'mcns' (CX pools)");
+        cx_armed = true;
+        size_t n = std::min(CX_EPGv.size(), s.cx_cue.size());
+        for (size_t i = 0; i < n; i++) { idx.push_back(CX_EPGv[i]); val.push_back(s.cx_cue[i]*2.0f); }
+    }
+    if (std::fabs(s.angvel) > 0 && (mode == "banc" || mode == "mcns") && !CX_EPGv.empty())
+        cx_armed = true;
     if (s.has_image) {
         if (R.empty())
             throw std::runtime_error("images require R photoreceptors (not mb)");
@@ -749,6 +778,129 @@ std::vector<float> FlyBrain::forward_pure(const std::vector<int32_t>& idx,
     return f_a;
 }
 
+// ---- EB ring-attractor (banc/mcns rate): rotation integrator + maintenance.
+// Same equation as forward_pure (fan-norm, frozen weights x loop gain)
+// over the EPG+D7+PEN subgraph. See fly_api._cx_loop docs.
+void FlyBrain::ensure_cx() {
+    if (cx_cached_n == N && !cx_nodes.empty()) return;
+    cx_nodes.clear(); cx_lpre.clear(); cx_lpost.clear(); cx_sw.clear();
+    cx_ring_epg.clear(); cx_eloc.clear(); cx_prev.clear();
+    std::vector<int32_t> all;
+    all.insert(all.end(), CX_EPGv.begin(), CX_EPGv.end());
+    all.insert(all.end(), CX_D7.begin(), CX_D7.end());
+    all.insert(all.end(), CX_PEN.begin(), CX_PEN.end());
+    std::sort(all.begin(), all.end());
+    all.erase(std::unique(all.begin(), all.end()), all.end());
+    for (auto id : all) if (id >= 0 && id < N) cx_nodes.push_back(id);
+    if (cx_nodes.empty()) { cx_cached_n = N; return; }
+    std::unordered_map<int32_t, int> loc;
+    loc.reserve(cx_nodes.size() * 2);
+    for (size_t i = 0; i < cx_nodes.size(); i++) loc[cx_nodes[i]] = (int)i;
+    for (int64_t e = 0; e < E; e++) {
+        auto a = loc.find(pre[(size_t)e]), b = loc.find(post[(size_t)e]);
+        if (a != loc.end() && b != loc.end()) {
+            cx_lpre.push_back(a->second); cx_lpost.push_back(b->second);
+            cx_sw.push_back(wM[(size_t)e] * sign[(size_t)e]);
+        }
+    }
+    // ring order: EPG pool sorted by wedge rank
+    if (CX_wedge.size() == CX_EPGv.size()) {
+        std::vector<int> ord(CX_EPGv.size());
+        for (size_t i = 0; i < ord.size(); i++) ord[i] = (int)i;
+        std::sort(ord.begin(), ord.end(), [&](int a, int b) {
+            return CX_wedge[(size_t)a] < CX_wedge[(size_t)b]; });
+        cx_eloc.assign(CX_EPGv.size(), 0);
+        for (size_t k = 0; k < ord.size(); k++) {
+            cx_ring_epg.push_back(CX_EPGv[(size_t)ord[k]]);
+            cx_eloc[(size_t)ord[k]] = (int)k;
+        }
+    }
+    cx_prev.assign(cx_nodes.size(), 0.0f);
+    cx_cached_n = N;
+    std::printf("cx_loop: %d neurons, %d edges (EPG+D7+PEN)\n",
+                (int)cx_nodes.size(), (int)cx_lpre.size());
+}
+
+std::vector<float> FlyBrain::cx_loop(const std::vector<float>& h,
+                                     const std::vector<int32_t>& idx,
+                                     const std::vector<float>& val,
+                                     float thr, float angvel) {
+    if ((mode != "banc" && mode != "mcns") || !cx_armed || CX_EPGv.empty())
+        return h;
+    float G = cx_gain, GI = cx_gain_inh;
+    int K = cx_iters;
+    if (G == 0 || K <= 0) return h;
+    ensure_cx();
+    size_t C = cx_nodes.size();
+    if (!C) return h;
+    std::unordered_map<int32_t, int> loc;
+    loc.reserve(C * 2);
+    for (size_t i = 0; i < C; i++) loc[cx_nodes[i]] = (int)i;
+    std::vector<float> ext(C, 0.0f), x(C);
+    for (size_t i = 0; i < idx.size() && i < val.size(); i++) {
+        auto it = loc.find(idx[i]);
+        if (it != loc.end()) ext[(size_t)it->second] += val[i];
+    }
+    bool has_prev = ((int)cx_prev.size() == (int)C);
+    if (cx_leak > 0 && has_prev)
+        for (size_t i = 0; i < C; i++) x[i] = ext[i] + cx_leak * cx_prev[i];
+    else
+        for (size_t i = 0; i < C; i++) {
+            int32_t g = cx_nodes[i];
+            x[i] = (g >= 0 && g < (int)h.size()) ? h[(size_t)g] : 0.0f;
+        }
+    if (angvel != 0.0f && !cx_ring_epg.empty() && has_prev && cx_leak > 0) {
+        // rotate carried EPG bump along ring (lerp for fractional ranks)
+        int n = (int)cx_ring_epg.size();
+        std::vector<float> ring(n);
+        for (int k = 0; k < n; k++) {
+            auto it = loc.find(cx_ring_epg[(size_t)k]);
+            ring[(size_t)k] = (it == loc.end()) ? 0.0f : x[(size_t)it->second];
+        }
+        float sh = std::fmod(angvel, (float)n);
+        if (sh < 0) sh += n;
+        int i0 = ((int)std::floor(sh)) % n;
+        float f = sh - std::floor(sh);
+        int i1 = (i0 + 1) % n;
+        for (size_t p = 0; p < CX_EPGv.size() && p < cx_eloc.size(); p++) {
+            int k = cx_eloc[p]; // rank of pool element p
+            float rv = (1 - f) * ring[(k - i0 + 2 * n) % n] + f * ring[(k - i1 + 2 * n) % n];
+            auto it = loc.find(CX_EPGv[p]);
+            if (it == loc.end()) continue;
+            // x = rotated carry + ext (ext folded here, zeroed below)
+            x[(size_t)it->second] = rv * cx_leak + ext[(size_t)it->second];
+            ext[(size_t)it->second] = 0.0f;
+        }
+    }
+    bool lif = (act_id == 1);
+    float sat = lif_sat;
+    std::vector<float> agg(C);
+    for (int it = 0; it < K; it++) {
+        std::fill(agg.begin(), agg.end(), 0.0f);
+        for (size_t e = 0; e < cx_lpre.size(); e++) {
+            float w = cx_sw[e];
+            float g = (w >= 0 ? G : GI) * std::fabs(w);
+            agg[(size_t)cx_lpost[e]] += x[(size_t)cx_lpre[e]] * (w >= 0 ? g : -g);
+        }
+        for (size_t i = 0; i < C; i++) {
+            int32_t g = cx_nodes[i];
+            float denom = (g >= 0 && g < N) ? (fan[(size_t)g] + 1e-6f) : 1.0f;
+            float v = agg[i] / denom - thr;
+            float a = 0.0f;
+            if (v > 0) a = lif ? sat * (1.0f - std::exp(-v / sat)) : v;
+            x[i] = a + ext[i];
+        }
+    }
+    std::vector<float> out = h;
+    for (size_t i = 0; i < C; i++) {
+        int32_t g = cx_nodes[i];
+        if (g >= 0 && g < (int)out.size()) out[(size_t)g] = x[i];
+    }
+    cx_prev = x;
+    if ((int)f_prev.size() == N) f_prev = out;
+    return out;
+}
+
 Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
     int hh = (hops_o < 0) ? hops : hops_o;
     std::vector<int32_t> idx; std::vector<float> vv;
@@ -775,7 +927,8 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
         }
     }
     bool spk = (act == "spike");
-    std::vector<float> h = spk ? forward_spike(idx, vuse) : forward_pure(idx, vuse, hh, thr);
+    std::vector<float> h = spk ? forward_spike(idx, vuse, s.angvel) : forward_pure(idx, vuse, hh, thr);
+    if (!spk) h = cx_loop(h, idx, vuse, thr, s.angvel);
     // KC top-5%
     size_t nKC = KC.size();
     std::vector<float> kcs(nKC);
@@ -857,13 +1010,18 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
             double se=0; for (auto id: CX_EPGv) if(id>=0&&id<N) se+=h[(size_t)id];
             o.CX_EPG=(float)(se/CX_EPGv.size());
             if(CX_wedge.size()==CX_EPGv.size() && !CX_EPGv.empty()){
-                int bi=0; float bv=-1;
-                for(size_t i=0;i<CX_wedge.size();i++){
-                    int32_t id=CX_EPGv[(size_t)CX_wedge[i]];
+                // wedge -> ring order via argsort (old code indexed the
+                // pool by rank, scrambling the bump; see fly_api fix)
+                ensure_cx();
+                int bi=0; float bv=-1, bsum=0;
+                for(size_t k=0;k<cx_ring_epg.size();k++){
+                    int32_t id=cx_ring_epg[k];
                     float v=(id>=0&&id<N)?h[(size_t)id]:0;
-                    if(v>bv){bv=v;bi=(int)i;}
+                    bsum+=v;
+                    if(v>bv){bv=v;bi=(int)k;}
                 }
                 o.CX_bump=bi;
+                o.CX_bump_amp = (bsum>1e-9f)? bv/(bsum/(float)cx_ring_epg.size()) : 0.0f;
             } else o.CX_bump=-1;
             if(!CX_PFL_L.empty()&&!CX_PFL_R.empty()){
                 o.CX_PFL_L=mean_pool(CX_PFL_L); o.CX_PFL_R=mean_pool(CX_PFL_R);

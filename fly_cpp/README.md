@@ -102,14 +102,21 @@ still load (size check as before).
 
 ## Central complex (compass + steering readouts)
 
-CX pools from data (BANC EPG50/PFL51/PEN42/PFN443; MCNS 50/50/42/456 —
-suspiciously symmetric, true 1:1 homology). EPG wedge order from EB-ring
-anatomy (xy plane); PFL side clean in BANC, by DESC-output wiring in MCNS
-(no side metadata, 29/21). Measured (active, 4 hops): right bar ->
-bump@wedge27 (left: @37), PFL turn +0.06/+0.07; C++ bump bit-identical.
-MCNS CX dark (no L-drive to push deep); free reverberation decays (no rate
-attractor — needs LIF recurrent sim, open work). Readouts are feedforward
-snapshots, not persistent dynamics.
+CX pools from data (BANC EPG50/Delta7-40/PEN42/PFN443; MCNS 50/42/42/456).
+EPG ring order = spectral (PEN-profile topography, no coordinates):
+BANC PEN->EPG spread 0.077 + EPG-EPG locality 0.31 (validated=1);
+MCNS 0.273/0.14 (functional, validated=0, EXPERIMENTAL). PFL side clean in
+BANC, by DESC-output wiring in MCNS (29/21). NT: EPG/PEN ACh (+), D7
+glutamate (-) - Dale signs already in weights.
+Ring attractor (`test-attractor`, rate): cx_cue landmark -> bump lands
+(+/-6 ranks), dark holds (banc pinned, mcns drifts <=10), angvel walks it
+with correct sign (lumpy individual, ~1-2 ranks/step). Mechanism: rotation
+integrator (direction from PEN data: left-PEN +1.5 ranks) + K=2 maintenance
+over frozen EPG+D7+PEN weights (fan-norm, raw EM ratios, CX-local carry
+0.85). Spike: cue-evoked bump only (recipe spk2.0/GI2/u.08/bg2/plat.8);
+spike dark-hold/velocity = OPEN (needs per-neuron E/I homeostasis).
+Legacy CX_bump mapping bug fixed (pool indexed by rank -> argsort); legacy
+assays unaffected (loop armed only by cx_cue/angvel/set_cx_gain).
 
 ## Batteries across modes (CNS-agnostic protocols)
 
