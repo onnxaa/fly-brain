@@ -1083,6 +1083,7 @@ class FlyBrainAPI:
         """Current normalization regime."""
         return str(getattr(self, "_scaling", "static"))
 
+
     def _forward_pure_mb(self, idx, val, hops=1, thr=0.0):
         if getattr(self, "_fan", None) is None:
             self.enable_scaling()

@@ -78,6 +78,11 @@ Use active for deep vision (`--hops 4`): banc bars reach KC/DN/legs
 Parity: bit-identical at 2 hops (banc +10.1793, mcns −365.8993); at 4+
 hops behavior-class (means match ~10%, MB_pref exact value diverges —
 difference of two large means + FP order chaos; lateralization preserved).
+Full mode too (no code change needed): active bars reach DN with correct
+ipsilateral lateralization (left 0.0587/0.0581, right 0.0521/0.0634).
+Rejected: tonic baseline (tested 0.5 in all modes — adds literally nothing;
+uniform tonic dies by E/I cancellation within ~3 hops; OFF responses would
+need chain-wide tonicity, out of scope).
 
 ## MCNS retinotopy via BANC homology + wbin headers
 
