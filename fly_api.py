@@ -195,6 +195,8 @@ class FlyBrainAPI:
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
             self.MOTOR_wing = np.asarray(r["wing"], dtype=np.int32)
             self.MOTOR_neck = np.asarray(r["neck"], dtype=np.int32)
+            for _k in ("EPG", "PFL", "PFL_L", "PFL_R", "PEN", "PFN", "EPG_wedge"):
+                setattr(self, "CX_" + _k, np.asarray(r[_k], dtype=np.int32) if _k in r else np.zeros(0, np.int32))
             self.CLOCK_M = np.asarray(r["CLOCK_M"], dtype=np.int32) if "CLOCK_M" in r else np.zeros(0, np.int32)
             self.CLOCK_E = np.asarray(r["CLOCK_E"], dtype=np.int32) if "CLOCK_E" in r else np.zeros(0, np.int32)
             self.GRN = np.asarray(r["GRN"], dtype=np.int32) if "GRN" in r else np.zeros(0, np.int32)
@@ -253,6 +255,8 @@ class FlyBrainAPI:
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
             self.MOTOR_wing = np.asarray(r["wing"], dtype=np.int32)
             self.MOTOR_neck = np.asarray(r["neck"], dtype=np.int32)
+            for _k in ("EPG", "PFL", "PFL_L", "PFL_R", "PEN", "PFN", "EPG_wedge"):
+                setattr(self, "CX_" + _k, np.asarray(r[_k], dtype=np.int32) if _k in r else np.zeros(0, np.int32))
             self.CLOCK_M = np.asarray(r["CLOCK_M"], dtype=np.int32) if "CLOCK_M" in r else np.zeros(0, np.int32)
             self.CLOCK_E = np.asarray(r["CLOCK_E"], dtype=np.int32) if "CLOCK_E" in r else np.zeros(0, np.int32)
             self.GRN = np.asarray(r["GRN"], dtype=np.int32) if "GRN" in r else np.zeros(0, np.int32)
@@ -1303,6 +1307,22 @@ class FlyBrainAPI:
             if len(self.DESC_L) and len(self.DESC_R):
                 out["DN_L"] = float(h[self.DESC_L].mean()); out["DN_R"] = float(h[self.DESC_R].mean())
                 out["turn"] = float(out["DN_L"]-out["DN_R"])  # >0 turn left (convention)
+            if self.mode in ("banc", "mcns"):
+                # central complex: EPG bump (wedge order, banc) + PFL steering.
+                # MCNS PFL side by DESC-output wiring (no side metadata);
+                # no EPG wedge order in MCNS (homology too sparse) -> mean only.
+                _epg = getattr(self, "CX_EPG", np.zeros(0, np.int32))
+                _wo = getattr(self, "CX_EPG_wedge", np.zeros(0, np.int32))
+                if len(_epg):
+                    _e = h[_epg].astype(np.float64)
+                    out["CX_EPG"] = float(_e.mean())
+                    out["CX_bump"] = int(np.argmax(_e[_wo])) if len(_wo) == len(_epg) else -1
+                _pl = getattr(self, "CX_PFL_L", np.zeros(0, np.int32))
+                _pr = getattr(self, "CX_PFL_R", np.zeros(0, np.int32))
+                if len(_pl) and len(_pr):
+                    out["CX_PFL_L"] = float(h[_pl].mean())
+                    out["CX_PFL_R"] = float(h[_pr].mean())
+                    out["CX_turn"] = float(out["CX_PFL_L"] - out["CX_PFL_R"])
             if self.mode in ("banc", "mcns"):
                 # intact brain->VNC chain, one animal: direct motor readouts
                 _mm = getattr(self, "MOTOR", np.zeros(0, np.int32))

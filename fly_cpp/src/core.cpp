@@ -104,6 +104,11 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         MOT = need(p+"_MOTOR"); MOT_legL = need(p+"_leg_L");
         MOT_legR = need(p+"_leg_R"); MOT_wing = need(p+"_wing");
         MOT_neck = need(p+"_neck");
+        try {
+            CX_EPGv = need(p+"_CX_EPG"); CX_PFL = need(p+"_CX_PFL");
+            CX_PFL_L = need(p+"_CX_PFL_L"); CX_PFL_R = need(p+"_CX_PFL_R");
+        } catch (...) {}
+        try { CX_wedge = need(p+"_CX_EPG_wedge"); } catch (...) {}
         R = need(p+"_R");
         try { R_cx = LF(p+"_R_cx"); R_cy = LF(p+"_R_cy"); } catch (...) {}
         try { R_L = L32(p+"_R_L"); R_R = L32(p+"_R_R"); } catch (...) {}
@@ -830,6 +835,24 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
         if(!DESC_L.empty()&&!DESC_R.empty()){
             o.DN_L=mean_pool(DESC_L); o.DN_R=mean_pool(DESC_R);
             o.turn=o.DN_L-o.DN_R; o.has_dn=true;
+        }
+        if(!CX_EPGv.empty()){
+            double se=0; for (auto id: CX_EPGv) if(id>=0&&id<N) se+=h[(size_t)id];
+            o.CX_EPG=(float)(se/CX_EPGv.size());
+            if(CX_wedge.size()==CX_EPGv.size() && !CX_EPGv.empty()){
+                int bi=0; float bv=-1;
+                for(size_t i=0;i<CX_wedge.size();i++){
+                    int32_t id=CX_EPGv[(size_t)CX_wedge[i]];
+                    float v=(id>=0&&id<N)?h[(size_t)id]:0;
+                    if(v>bv){bv=v;bi=(int)i;}
+                }
+                o.CX_bump=bi;
+            } else o.CX_bump=-1;
+            if(!CX_PFL_L.empty()&&!CX_PFL_R.empty()){
+                o.CX_PFL_L=mean_pool(CX_PFL_L); o.CX_PFL_R=mean_pool(CX_PFL_R);
+                o.CX_turn=o.CX_PFL_L-o.CX_PFL_R;
+            }
+            o.has_cx=true;
         }
         if(!MOT.empty()){
             o.BANC_motor=mean_pool(MOT);

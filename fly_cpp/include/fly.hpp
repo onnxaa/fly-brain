@@ -39,6 +39,8 @@ struct Out {
     float BANC_motor = 0, BANC_leg_L = 0, BANC_leg_R = 0, BANC_leg_imb = 0;
     float BANC_wing = 0, BANC_neck = 0;
     bool has_bcmotor = false;
+    float CX_EPG = 0, CX_PFL_L = 0, CX_PFL_R = 0, CX_turn = 0;
+    int CX_bump = -1; bool has_cx = false;
     // real VNC (MANC) readouts, valid when has_vnc
     float VNC_desc_mean = 0, VNC_motor = 0;
     float VNC_leg_L = 0, VNC_leg_R = 0, VNC_leg_imb = 0;
@@ -87,6 +89,7 @@ public:
     std::vector<int32_t> ORN_L, ORN_R, ALPN_L, ALPN_R, MECH_L, MECH_R;
     std::vector<int32_t> DESC_L, DESC_R, R, VIS_eye;
     std::vector<int32_t> R_L, R_R, L1v, L2v, Rret, R_LU, R_RU;
+    std::vector<int32_t> CX_EPGv, CX_PFL, CX_PFL_L, CX_PFL_R, CX_wedge;
     std::vector<float> Rret_cx, Rret_cy;
     std::vector<float> L1cx, L1cy, L2cx, L2cy;
     // whole-CNS (banc/mcns) motor pools

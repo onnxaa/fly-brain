@@ -100,6 +100,17 @@ wbin v2: 40B header (magic FLYWBIN1 + mode + N + E); cross-mode loads fail
 fast (`wbin mode mismatch: file=mcns brain=banc`); legacy headerless files
 still load (size check as before).
 
+## Central complex (compass + steering readouts)
+
+CX pools from data (BANC EPG50/PFL51/PEN42/PFN443; MCNS 50/50/42/456 —
+suspiciously symmetric, true 1:1 homology). EPG wedge order from EB-ring
+anatomy (xy plane); PFL side clean in BANC, by DESC-output wiring in MCNS
+(no side metadata, 29/21). Measured (active, 4 hops): right bar ->
+bump@wedge27 (left: @37), PFL turn +0.06/+0.07; C++ bump bit-identical.
+MCNS CX dark (no L-drive to push deep); free reverberation decays (no rate
+attractor — needs LIF recurrent sim, open work). Readouts are feedforward
+snapshots, not persistent dynamics.
+
 ## Batteries across modes (CNS-agnostic protocols)
 
 `tmaze|spaced|heatbox(_ctl)|test-x|test-std|test-sleep` take `--mode` since

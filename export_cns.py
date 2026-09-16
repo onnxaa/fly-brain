@@ -69,6 +69,9 @@ for mode, circ, roles in (("banc", "banc_circuit.npz", "banc_roles.npz"),
         for t in ("sugar", "bitter", "water", "ir94e"):
             # single GRN pool, no quality split (see API docs)
             w(f"{mode}_taste_{t}", grn)
+    for ck in ("EPG", "PFL", "PFL_L", "PFL_R", "PEN", "PFN", "EPG_wedge"):
+        if ck in r:
+            w(f"{mode}_CX_{ck}", np.asarray(r[ck]).astype(np.int32))
     if "R" in r:
         rr = np.asarray(r["R"]).astype(np.int32)
         w(f"{mode}_R", rr)

@@ -134,6 +134,9 @@ int main(int argc, char** argv) {
                         "wing=%+.5f neck=%+.5f\n",
                         o.VNC_desc_mean, o.VNC_motor, o.VNC_leg_L, o.VNC_leg_R,
                         o.VNC_leg_imb, o.VNC_wing, o.VNC_neck);
+        if (o.has_cx)
+            std::printf("CX_bump=%d CX_EPG=%+.4f PFL_L=%+.4f PFL_R=%+.4f turn=%+.4f\n",
+                        o.CX_bump, o.CX_EPG, o.CX_PFL_L, o.CX_PFL_R, o.CX_turn);
         if (o.has_bcmotor)
             std::printf("BANC_motor=%+.5f legL=%+.5f legR=%+.5f imb=%+.5f "
                         "wing=%+.5f neck=%+.5f\n",
