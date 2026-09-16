@@ -130,12 +130,14 @@ np.savez_compressed("male_circuit.npz", pre=pre, post=post, weight=cnt, sign=sig
 print("saved male_circuit.npz", flush=True)
 del pre, post, cnt, sign
 
+L1 = pool(np.char.startswith(typ, "L1"))
+L2 = pool(np.char.startswith(typ, "L2"))
 orn_glom = np.array([t[4:] if t.startswith("ORN_") else "" for t in typ[ORN]])
 np.savez_compressed("male_roles.npz", KC=KC, MBON=MBON, DAN=DAN, dan_pam=pam,
                      dan_ppl=ppl, ORN=ORN, ORN_glom=orn_glom, DESC=DESC,
                      DESC_L=DESC_L, DESC_R=DESC_R, MOTOR=MOTOR, leg_L=leg_L,
                      leg_R=leg_R, wing=wing, neck=neck, SENS=SENS,
-                     SENS_L=SENS_L, SENS_R=SENS_R, approach=approach,
+                     SENS_L=SENS_L, SENS_R=SENS_R, L1=L1, L2=L2, approach=approach,
                      avoid=avoid, side=side, K=np.array([K]))
 print("saved male_roles.npz", flush=True)
 
