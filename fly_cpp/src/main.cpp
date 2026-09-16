@@ -54,16 +54,16 @@ int main(int argc, char** argv) {
     if (cmd.empty()) { usage(); return 1; }
     // batteries (full mode forced inside, --mode ignored except tests)
     if (cmd == "tmaze") { fly::battery::tmaze(data, w_out, mode); return 0; }
-    if (cmd == "train_fix") { fly::battery::train_fix(data, w_out); return 0; }
+    if (cmd == "train_fix") { fly::battery::train_fix(data, w_out, mode); return 0; }
     if (cmd == "buridan") {
         fly::battery::buridan(data, w_in,
                               steps > 0 ? steps : 25,
-                              n_switch > 0 ? n_switch : 3);
+                              n_switch > 0 ? n_switch : 3, mode);
         return 0;
     }
-    if (cmd == "habituate") { fly::battery::habituate(data, w_in); return 0; }
+    if (cmd == "habituate") { fly::battery::habituate(data, w_in, mode); return 0; }
     if (cmd == "detour") {
-        fly::battery::detour(data, w_in, steps > 0 ? steps : 20);
+        fly::battery::detour(data, w_in, steps > 0 ? steps : 20, mode);
         return 0;
     }
     if (cmd == "heatbox") {

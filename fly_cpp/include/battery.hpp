@@ -26,21 +26,21 @@ std::vector<float> render_pano(float x, float y, float th,
 std::vector<float> disk_img(float cx, float r, float bg = 0.0f, float fg = 1.0f);
 
 // Opponent stripe-fixation outputs (retinotopic pools, seeds 21/22)
-FlyBrain make_fix_api(const std::string& data);
+FlyBrain make_fix_api(const std::string& data, const std::string& mode = "full");
 void train_fix_on_brain(FlyBrain& api);
-void train_fix(const std::string& data, const std::string& w_out = "");
+void train_fix(const std::string& data, const std::string& w_out = "", const std::string& mode = "full");
 
 // Pacing Buridan. w_in: .wbin from train_fix (if missing, trains inline).
 void buridan(const std::string& data, const std::string& w_in = "",
-             int steps = 25, int n_switch = 3);
+             int steps = 25, int n_switch = 3, const std::string& mode = "full");
 
 // Habituation (STD off flat + STD on depress + recovery). Flee-only arena
 // outputs trained inline (eat/food are separate scope=new outputs and do
 // not affect flee) unless w_in (.wbin) exists.
-void habituate(const std::string& data, const std::string& w_in = "");
+void habituate(const std::string& data, const std::string& w_in = "", const std::string& mode = "full");
 
 // Gotz detour re-acquisition.
-void detour(const std::string& data, const std::string& w_in = "", int steps = 20);
+void detour(const std::string& data, const std::string& w_in = "", int steps = 20, const std::string& mode = "full");
 
 // Heatbox operant place learning (1D chamber, 8 bins; place prosthesis =
 // ALPN in full, MECH vector in banc/mcns which have no ALPN pool)

@@ -178,7 +178,18 @@ class FlyBrainAPI:
             self.VIS = np.zeros(0, np.int32); self.VIS_eye = np.zeros(0, np.int32)
             self.EFFERENT = np.zeros(0, np.int32)
             self.ME = np.zeros(0, np.int32); self.LO = np.zeros(0, np.int32)
-            self.R = np.zeros(0, np.int32)
+            self.R = np.asarray(r["R"], dtype=np.int32) if "R" in r else np.zeros(0, np.int32)
+            self.R_cx = np.asarray(r["R_cx"], dtype=np.float32) if "R_cx" in r else np.zeros(0, np.float32)
+            self.R_cy = np.asarray(r["R_cy"], dtype=np.float32) if "R_cy" in r else np.zeros(0, np.float32)
+            _rs = np.asarray(r["R_side"]).astype(str) if "R_side" in r else np.zeros(0)
+            self.R_L = self.R[_rs == "left"] if len(_rs) == len(self.R) else np.zeros(0, np.int32)
+            self.R_R = self.R[_rs == "right"] if len(_rs) == len(self.R) else np.zeros(0, np.int32)
+            self.L1 = np.asarray(r["L1"], dtype=np.int32) if "L1" in r else np.zeros(0, np.int32)
+            self.L1_cx = np.asarray(r["L1_cx"], dtype=np.float32) if "L1_cx" in r else np.zeros(0, np.float32)
+            self.L1_cy = np.asarray(r["L1_cy"], dtype=np.float32) if "L1_cy" in r else np.zeros(0, np.float32)
+            self.L2 = np.asarray(r["L2"], dtype=np.int32) if "L2" in r else np.zeros(0, np.int32)
+            self.L2_cx = np.asarray(r["L2_cx"], dtype=np.float32) if "L2_cx" in r else np.zeros(0, np.float32)
+            self.L2_cy = np.asarray(r["L2_cy"], dtype=np.float32) if "L2_cy" in r else np.zeros(0, np.float32)
             self.MOTOR = np.asarray(r["MOTOR"], dtype=np.int32)
             self.MOTOR_leg_L = np.asarray(r["leg_L"], dtype=np.int32)
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
@@ -186,6 +197,7 @@ class FlyBrainAPI:
             self.MOTOR_neck = np.asarray(r["neck"], dtype=np.int32)
             self._img_proj = None
             self._pf = None
+            self._last_small = None
         elif mode == "mcns":
             # mcns: MALE whole-CNS (MCNS v1.0, Berg et al., Cell 2026) -
             # brain + VNC in ONE male animal, intact neck connective. Frozen
@@ -220,7 +232,11 @@ class FlyBrainAPI:
             self.VIS = np.zeros(0, np.int32); self.VIS_eye = np.zeros(0, np.int32)
             self.EFFERENT = np.zeros(0, np.int32)
             self.ME = np.zeros(0, np.int32); self.LO = np.zeros(0, np.int32)
-            self.R = np.zeros(0, np.int32)
+            self.R = np.asarray(r["R"], dtype=np.int32) if "R" in r else np.zeros(0, np.int32)
+            self.R_cx = np.zeros(0, np.float32); self.R_cy = np.zeros(0, np.float32)
+            _rs = np.asarray(r["R_side"]).astype(str) if "R_side" in r else np.zeros(0)
+            self.R_L = self.R[_rs == "L"] if len(_rs) == len(self.R) else np.zeros(0, np.int32)
+            self.R_R = self.R[_rs == "R"] if len(_rs) == len(self.R) else np.zeros(0, np.int32)
             self.MOTOR = np.asarray(r["MOTOR"], dtype=np.int32)
             self.MOTOR_leg_L = np.asarray(r["leg_L"], dtype=np.int32)
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
@@ -228,6 +244,7 @@ class FlyBrainAPI:
             self.MOTOR_neck = np.asarray(r["neck"], dtype=np.int32)
             self._img_proj = None
             self._pf = None
+            self._last_small = None
         # shared: K->M weights + embeddings
         if mode == "mb":
             self.sign = np.sign(w); self.sign[self.sign == 0] = 1.0
@@ -728,6 +745,9 @@ class FlyBrainAPI:
         """Per-R sampling: each R cell reads the image at its own (cx, cy) with
         bilinear interpolation over a 3x3 Gaussian-blurred frame (RF ~1 px).
         No pixel grid, no qcut bins - rank order from anatomy is the only map."""
+        return self._sample_at(self.R_cx, self.R_cy, gray)
+
+    def _sample_at(self, cxs, cys, gray):
         a = np.asarray(gray, dtype=np.float32)
         H, W = a.shape
         # 3x3 Gaussian RF [[1,2,1],[2,4,2],[1,2,1]]/16, edge-replicated pad.
@@ -735,8 +755,8 @@ class FlyBrainAPI:
         b = (4 * ap[1:-1, 1:-1] + 2 * (ap[:-2, 1:-1] + ap[2:, 1:-1] +
              ap[1:-1, :-2] + ap[1:-1, 2:]) +
              ap[:-2, :-2] + ap[:-2, 2:] + ap[2:, :-2] + ap[2:, 2:]) / 16.0
-        xs = self.R_cx.astype(np.float64) * (W - 1)
-        ys = self.R_cy.astype(np.float64) * (H - 1)
+        xs = np.asarray(cxs, dtype=np.float64) * (W - 1)
+        ys = np.asarray(cys, dtype=np.float64) * (H - 1)
         x0 = np.floor(xs).astype(np.int64)
         y0 = np.floor(ys).astype(np.int64)
         x0 = np.clip(x0, 0, max(0, W - 1))
@@ -864,13 +884,32 @@ class FlyBrainAPI:
                 n = min(len(o), len(side))
                 idx.append(side[:n]); val.append((o[:n]*2.0).astype(np.float32))
         if image is not None:
-            if self.mode != "full" or not len(getattr(self, "R", [])):
-                raise ValueError("images require mode='full' with R photoreceptors (see_lif mapping; mb has no eyes)")
+            if not len(getattr(self, "R", [])):
+                raise ValueError("images require R photoreceptors (full/banc/mcns, not mb)")
+            if self.mode == "mcns":
+                # honest eye split (no per-neuron RF in MCNS v1.0 flat files):
+                # mean(left half) -> R_L, mean(right half) -> R_R.
+                g = self._gray(image)
+                Hh, Ww = g.shape
+                lv = float(g[:, :Ww // 2].mean()); rv = float(g[:, Ww // 2:].mean())
+                idx.append(self.R_L); val.append(np.full(len(self.R_L), lv * 2.0, np.float32))
+                idx.append(self.R_R); val.append(np.full(len(self.R_R), rv * 2.0, np.float32))
+                mot, _ = self._motion_energies(self._small16(g))
+                info["motion"] = mot
+            if self.mode not in ("full", "banc"):
+                raise ValueError("images require mode='full'/'banc' (retinotopic R) or 'mcns' (eye split)")
             # Phototransduction only: each R cell samples the image at its own
             # receptive field (bilinear + Gaussian RF). No grid, no bins.
             g = self._gray(image)
             idx.append(self.R)
             val.append((self._sample_R(g) * 2.0).astype(np.float32))
+            if self.mode == "banc" and len(getattr(self, "L1", [])):
+                # luminance proxy (R1-6 absent in BANC v888): drive their L1/L2
+                # targets at column RF. Labeled proxy, not photoreceptors.
+                idx.append(self.L1)
+                val.append((self._sample_at(self.L1_cx, self.L1_cy, g) * 2.0).astype(np.float32))
+                idx.append(self.L2)
+                val.append((self._sample_at(self.L2_cx, self.L2_cy, g) * 2.0).astype(np.float32))
             # Reichardt motion: readout ONLY (info), never injected into ME - no mapping data
             mot, _ = self._motion_energies(self._small16(g))
             info["motion"] = mot

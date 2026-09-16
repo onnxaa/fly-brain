@@ -103,6 +103,13 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         MOT = need(p+"_MOTOR"); MOT_legL = need(p+"_leg_L");
         MOT_legR = need(p+"_leg_R"); MOT_wing = need(p+"_wing");
         MOT_neck = need(p+"_neck");
+        R = need(p+"_R");
+        try { R_cx = LF(p+"_R_cx"); R_cy = LF(p+"_R_cy"); } catch (...) {}
+        try { R_L = L32(p+"_R_L"); R_R = L32(p+"_R_R"); } catch (...) {}
+        try {
+            L1v = L32(p+"_L1"); L1cx = LF(p+"_L1_cx"); L1cy = LF(p+"_L1_cy");
+            L2v = L32(p+"_L2"); L2cx = LF(p+"_L2_cx"); L2cy = LF(p+"_L2_cy");
+        } catch (...) {}
         N = (int)LF(p + "_fan").size();
         hops = 2;
         elig.assign(E, 0.0f);
@@ -556,11 +563,33 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
         }
     }
     if (s.has_image) {
-        if (mode != "full" || R.empty())
-            throw std::runtime_error("images require mode='full' with R");
+        if (R.empty())
+            throw std::runtime_error("images require R photoreceptors (not mb)");
         std::vector<float> g = gray(s.image, s.imgH, s.imgW);
-        std::vector<float> rv = sample_R(g, s.imgH, s.imgW);
-        for (size_t i = 0; i < R.size(); i++) { idx.push_back(R[i]); val.push_back(rv[i]*2.0f); }
+        if (!R_cx.empty() && R_cx.size() == R.size()) {
+            std::vector<float> rv = sample_R(g, s.imgH, s.imgW);
+            for (size_t i = 0; i < R.size(); i++) { idx.push_back(R[i]); val.push_back(rv[i]*2.0f); }
+        } else if (!R_L.empty() && !R_R.empty()) {
+            // honest eye split (no per-neuron RF): mean halves -> R_L/R_R
+            double lv = 0, rv2 = 0;
+            for (int y = 0; y < s.imgH; y++)
+                for (int x = 0; x < s.imgW; x++) {
+                    float v = g[(size_t)y * s.imgW + x];
+                    if (x < s.imgW / 2) lv += v; else rv2 += v;
+                }
+            lv /= (s.imgH * (s.imgW / 2)); rv2 /= (s.imgH * (s.imgW - s.imgW / 2));
+            for (auto id : R_L) { idx.push_back(id); val.push_back((float)lv * 2.0f); }
+            for (auto id : R_R) { idx.push_back(id); val.push_back((float)rv2 * 2.0f); }
+        } else throw std::runtime_error("images: no R_cx map and no R_L/R split");
+        if (!L1v.empty() && L1cx.size() == L1v.size()) {
+            // luminance proxy (R1-6 absent in BANC): L1/L2 at column RF
+            std::vector<float> l1 = sample_at(g, s.imgH, s.imgW, L1cx, L1cy);
+            for (size_t i = 0; i < L1v.size(); i++) { idx.push_back(L1v[i]); val.push_back(l1[i] * 2.0f); }
+        }
+        if (!L2v.empty() && L2cx.size() == L2v.size()) {
+            std::vector<float> l2 = sample_at(g, s.imgH, s.imgW, L2cx, L2cy);
+            for (size_t i = 0; i < L2v.size(); i++) { idx.push_back(L2v[i]); val.push_back(l2[i] * 2.0f); }
+        }
         auto sm = small16(g, s.imgH, s.imgW);
         auto pr = motion_energies(sm);
         motion = pr.first; has_motion = true;

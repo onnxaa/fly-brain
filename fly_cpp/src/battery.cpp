@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <random>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace fly { namespace battery {
@@ -105,14 +106,20 @@ static float img_sum(const std::vector<float>& im) {
 }
 
 // ---- fixation outputs ----
-FlyBrain make_fix_api(const std::string& data) {
-    FlyBrain api("full", data);
+FlyBrain make_fix_api(const std::string& data, const std::string& mode) {
+    FlyBrain api(mode, data);
     api.enable_scaling();
     std::vector<int32_t> pL, pR;
-    for (size_t i = 0; i < api.R.size(); i++) {
-        if (api.R_cx[i] < 0.4f) pL.push_back(api.R[i]);
-        if (api.R_cx[i] > 0.6f) pR.push_back(api.R[i]);
+    if (api.R_cx.size() == api.R.size() && !api.R.empty()) {
+        for (size_t i = 0; i < api.R.size(); i++) {
+            if (api.R_cx[i] < 0.4f) pL.push_back(api.R[i]);
+            if (api.R_cx[i] > 0.6f) pR.push_back(api.R[i]);
+        }
+    } else {
+        // eye split only (mcns): coarse hemifield pools
+        pL = api.R_L; pR = api.R_R;
     }
+    if (pL.empty() || pR.empty()) throw std::runtime_error("fixation needs R_cx or R_L/R pools");
     api.x_add_output("fixL", 8, pL, -1, 0.01f, 21);
     api.x_add_output("fixR", 8, pR, -1, 0.01f, 22);
     return api;
@@ -143,8 +150,8 @@ void train_fix_on_brain(FlyBrain& api) {
     }
 }
 
-void train_fix(const std::string& data, const std::string& w_out) {
-    FlyBrain api = make_fix_api(data);
+void train_fix(const std::string& data, const std::string& w_out, const std::string& mode) {
+    FlyBrain api = make_fix_api(data, mode);
     train_fix_on_brain(api);
     if (!w_out.empty()) { api.save_wbin(w_out); std::printf("saved %s\n", w_out.c_str()); }
 }
@@ -167,8 +174,8 @@ static std::string lags_str(const std::vector<int>& lags) {
     return s;
 }
 
-void buridan(const std::string& data, const std::string& w_in, int steps, int n_switch) {
-    FlyBrain api = make_fix_api(data);
+void buridan(const std::string& data, const std::string& w_in, int steps, int n_switch, const std::string& mode) {
+    FlyBrain api = make_fix_api(data, mode);
     bool loaded = false;
     if (!w_in.empty() && file_exists(w_in)) {
         try { api.load_wbin(w_in); loaded = true; } catch (...) {}
@@ -216,8 +223,8 @@ void buridan(const std::string& data, const std::string& w_in, int steps, int n_
 }
 
 // ---- habituate (flee-only arena) ----
-static FlyBrain make_flee_api(const std::string& data) {
-    FlyBrain api("full", data);
+static FlyBrain make_flee_api(const std::string& data, const std::string& mode) {
+    FlyBrain api(mode, data);
     api.enable_scaling();
     std::vector<int32_t> pool;
     pool.insert(pool.end(), api.R.begin(), api.R.end());
@@ -244,8 +251,8 @@ static void train_flee_on_brain(FlyBrain& api) {
     }
 }
 
-void habituate(const std::string& data, const std::string& w_in) {
-    FlyBrain api = make_flee_api(data);
+void habituate(const std::string& data, const std::string& w_in, const std::string& mode) {
+    FlyBrain api = make_flee_api(data, mode);
     bool loaded = false;
     if (!w_in.empty() && file_exists(w_in)) {
         try { api.load_wbin(w_in); loaded = true; } catch (...) {}
@@ -277,8 +284,8 @@ void habituate(const std::string& data, const std::string& w_in) {
     std::printf("STD back off\n");
 }
 
-void detour(const std::string& data, const std::string& w_in, int steps) {
-    FlyBrain api = make_fix_api(data);
+void detour(const std::string& data, const std::string& w_in, int steps, const std::string& mode) {
+    FlyBrain api = make_fix_api(data, mode);
     bool loaded = false;
     if (!w_in.empty() && file_exists(w_in)) {
         try { api.load_wbin(w_in); loaded = true; } catch (...) {}

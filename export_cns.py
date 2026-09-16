@@ -61,6 +61,21 @@ for mode, circ, roles in (("banc", "banc_circuit.npz", "banc_roles.npz"),
     orn = np.asarray(r["ORN"]).astype(np.int32)
     w(f"{mode}_ORN_L", orn[side[orn] == ("left" if mode == "banc" else "L")])
     w(f"{mode}_ORN_R", orn[side[orn] == ("right" if mode == "banc" else "R")])
+    if "R" in r:
+        rr = np.asarray(r["R"]).astype(np.int32)
+        w(f"{mode}_R", rr)
+        if "R_cx" in r:
+            w(f"{mode}_R_cx", np.asarray(r["R_cx"]).astype(np.float32))
+            w(f"{mode}_R_cy", np.asarray(r["R_cy"]).astype(np.float32))
+        if "R_side" in r:
+            rs = np.asarray(r["R_side"]).astype(str)
+            tag = "left" if mode == "banc" else "L"
+            tagR = "right" if mode == "banc" else "R"
+            w(f"{mode}_R_L", rr[rs == tag])
+            w(f"{mode}_R_R", rr[rs == tagR])
+    for lk in ("L1", "L2", "L1_cx", "L1_cy", "L2_cx", "L2_cy"):
+        if lk in r:
+            w(f"{mode}_{lk}", np.asarray(r[lk]).astype(np.int32 if not lk.endswith(("cx", "cy")) else np.float32))
     dd = np.load(f"{SRC}/{'banc_door.npz' if mode == 'banc' else 'male_door.npz'}")
     for odor in ODORS:
         w(f"{mode}_door_{odor}_idx", dd[odor + "_idx"].astype(np.int32))

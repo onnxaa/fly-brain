@@ -85,6 +85,8 @@ public:
     std::vector<int32_t> ORN, MECH, VIS, ALPN, EFFERENT, DESC, MEv, LOv;
     std::vector<int32_t> ORN_L, ORN_R, ALPN_L, ALPN_R, MECH_L, MECH_R;
     std::vector<int32_t> DESC_L, DESC_R, R, VIS_eye;
+    std::vector<int32_t> R_L, R_R, L1v, L2v;
+    std::vector<float> L1cx, L1cy, L2cx, L2cy;
     // whole-CNS (banc/mcns) motor pools
     std::vector<int32_t> MOT, MOT_legL, MOT_legR, MOT_wing, MOT_neck;
     std::vector<float> R_cx, R_cy;
@@ -219,6 +221,9 @@ public:
     std::pair<bool, std::map<std::string, float>> sleep_tick(float kc_frac);
     std::vector<float> gray(const std::vector<float>& img, int H, int Wd) const;
     std::vector<float> sample_R(const std::vector<float>& g, int H, int Wd) const;
+    std::vector<float> sample_at(const std::vector<float>& g, int H, int Wd,
+                                 const std::vector<float>& cxs,
+                                 const std::vector<float>& cys) const;
     std::vector<float> small16(const std::vector<float>& g, int H, int Wd) const;
     std::pair<std::map<std::string, float>, bool> motion_energies(
         const std::vector<float>& small);

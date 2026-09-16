@@ -86,6 +86,18 @@ clock-gating stays full-only: no clock pools yet). Measured (8 CPU):
 Heatbox places: ALPN prosthesis in full, fixed odor-mixture prosthesis
 (seed 11) in banc/mcns — MECH subsets don't reach MB in rate mode.
 
+## Vision in banc/mcns (real R front-ends)
+
+BANC: 1827 R7/R8 with RF from meta `position` (rank-norm, same recipe as
+FAFB) + L1/L2 luminance proxy at column RF (R1-6 absent in v888 — labeled
+proxy). MCNS: 4107 R1-6/R7/R8 as honest eye split only (rootSide L/R; no
+coordinates in v1.0 flat files, no fake RF). All visual batteries take
+`--mode`: train_fix (banc monotonic ±1.27, mcns saturated ±1.0), buridan
+(banc STEER 68% vs BASE 33%, mcns 56% vs 33%), habituate (banc drop 59%,
+mcns 27%, both recover), detour (final err 8°/6°). Deep rate vision still
+attenuates (OL→CB ~2000x) — fix/flee readouts tap R directly, same trick
+as full mode (whose rate KC/DN from vision are also ~0).
+
 Weights: C++ uses raw float32 `.wbin` (save/load_wbin), not Python `.npz`.
 `buridan`/`habituate`/`detour` train inline when `--w-in` is missing.
 `heatbox` writes the punishment schedule for `heatbox_ctl` (yoked/unpaired).
