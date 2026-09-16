@@ -110,6 +110,7 @@ public:
     // spike CX protocol (defaults off = bit-identical legacy)
     float cx_spk_gain = 1.0f, cx_spk_inh = 1.0f;
     float cx_std_u = 0.0f, cx_std_tau = 300.0f, cx_bg = 0.0f, cx_plat_boost = 0.0f;
+    float cx_tonic = 0.0f; // uniform deterministic CX floor (mV/ms, default 0)
     std::vector<double> cx_R, cx_plat;
     std::vector<char> cx_is_cx, cx_is_plat;
     std::vector<double> cx_eq; // compartment-local fan equalization
@@ -198,7 +199,7 @@ public:
     void set_cx_gain(float gain = 1.0f, float gain_inh = 1.0f, int iters = 2,
                      float leak = 0.85f, float spk = 1.0f, float spk_inh = 1.0f,
                      float std_u = 0.0f, float std_tau = 300.0f, float bg = 0.0f,
-                     float plat = 0.0f);
+                     float plat = 0.0f, float tonic = 0.0f);
     void set_activation(const std::string& name, float sat = 2.0f, int Tms = 200,
                         int seed = 7, float wdrv = 68.75f, float ainc = -1,
                         float rmax = 150.0f, float adapt = -1, int burn = -1);

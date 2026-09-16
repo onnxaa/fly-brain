@@ -691,17 +691,47 @@ void test_attractor(const std::string& data, const std::string& mode) {
             check(std::string("rate-av") + (AV > 0 ? "+" : "-"), ok, s);
         }
     }
-    // ---- spike cue (recipe from test_attractor.py; dark/velocity OPEN) ----
+    // ---- spike full triple (deterministic tonic regime; mirrors .py) ----
     if (mode == "banc") {
-        FlyBrain b(mode, data);
-        b.enable_scaling();
-        b.set_state(0.9f);
-        b.set_activation("spike");
-        b.set_cx_gain(1, 1, 2, 0.85f, 2.0f, 2.0f, 0.08f, 300.0f, 2.0f, 0.8f);
-        Stim c; c.has_cx_cue = true; c.cx_cue = mkcue(b);
-        Out o = b.step(c); o = b.step(c);
+        auto mkspk = [&]() {
+            FlyBrain b(mode, data);
+            b.enable_scaling();
+            b.set_state(0.9f);
+            b.set_activation("spike");
+            b.set_cx_gain(1, 1, 2, 0.85f, 2.0f, 2.5f, 0.08f, 300.0f, 0.0f, 1.0f, 0.06f);
+            return b;
+        };
+        auto spkcue = [&](FlyBrain& b) {
+            Stim c; c.has_cx_cue = true; c.cx_cue = mkcue(b);
+            Out o = b.step(c);
+            for (int i = 0; i < 3; i++) o = b.step(c); // 4 total: saturate plateau
+            return o;
+        };
+        FlyBrain b = mkspk();
+        Out o = spkcue(b);
         check("spike-cue", std::abs(cx_circ(o.CX_bump - 22, CNS_N)) <= 6 && o.CX_EPG > 0,
               "bump=" + std::to_string(o.CX_bump) + " CX_EPG=" + std::to_string(o.CX_EPG));
+        Stim blank;
+        std::vector<std::pair<int, float>> sd;
+        for (int i = 0; i < 7; i++) { Out q = b.step(blank); sd.emplace_back(q.CX_bump, q.CX_EPG); }
+        sd.erase(sd.begin()); // 1 settle step
+        bool hold = true;
+        for (auto& x : sd)
+            if (std::abs(cx_circ(x.first - sd[0].first, CNS_N)) > 6 || x.second < 0.3f) hold = false;
+        { std::string s; for (auto& x : sd) s += std::to_string(x.first) + " "; check("spike-dark", hold, s); }
+        for (float AV : {3.0f, -3.0f}) {
+            FlyBrain b2 = mkspk();
+            spkcue(b2);
+            std::vector<std::pair<int, float>> tr;
+            Stim av; av.angvel = AV;
+            for (int i = 0; i < 6; i++) { Out q = b2.step(av); tr.emplace_back(q.CX_bump, q.CX_EPG); }
+            int disp = 0;
+            for (size_t i = 0; i + 1 < tr.size(); i++) disp += cx_circ(tr[i + 1].first - tr[i].first, CNS_N);
+            bool ok = ((disp > 0) == (AV > 0)) && std::abs(disp) >= 4;
+            for (auto& x : tr) if (x.second < 0.3f) ok = false; // silent = invalid
+            std::string s; for (auto& x : tr) s += std::to_string(x.first) + " ";
+            check(std::string("spike-av") + (AV > 0 ? "+" : "-"), ok, s);
+        }
     }
     std::printf(fails ? "FAILURES: %d\n" : "ALL PASS\n", fails);
 }

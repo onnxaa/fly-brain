@@ -155,7 +155,8 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
     // CX-only, off by default). Masks cached by nN.
     bool use_std = (cx_std_u > 0 && cxmode);
     bool use_plat = (cx_plat_boost > 0 && cxmode);
-    if ((use_std || use_plat) && (int)cx_is_cx.size() != nN) {
+    bool use_tonic_pre = (cx_tonic > 0 && cxmode);
+    if ((use_std || use_plat || use_tonic_pre) && (int)cx_is_cx.size() != nN) {
         cx_is_cx.assign(nN, 0); cx_is_plat.assign(nN, 0);
         for (auto id : CX_EPGv) if (id >= 0 && id < nN) { cx_is_cx[(size_t)id] = 1; cx_is_plat[(size_t)id] = 1; }
         for (auto id : CX_D7) if (id >= 0 && id < nN) cx_is_cx[(size_t)id] = 1;
@@ -226,11 +227,19 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
     std::vector<int> fire_idx;
     fire_idx.reserve(4096);
     bool use_plat_loop = use_plat && !cx_plat_ids.empty() && cx_plat_boost > 0;
+    // deterministic tonic floor (mean-field background, no Poisson variance)
+    std::vector<int> cx_tonic_ids;
+    bool use_tonic = use_tonic_pre && (int)cx_is_cx.size() == nN;
+    if (use_tonic)
+        for (int i = 0; i < nN; i++)
+            if (cx_is_cx[(size_t)i]) cx_tonic_ids.push_back(i);
     for (int t = 0; t < T; t++) {
         for (int i = 0; i < nN; i++) gg[(size_t)i] *= DEC_G;
         for (int i = 0; i < nN; i++) adapt[(size_t)i] *= DEC_A;
         if (use_plat_loop)
             for (int id : cx_plat_ids) v[(size_t)id] += cx_plat[(size_t)id] * cx_plat_boost;
+        if (use_tonic)
+            for (int id : cx_tonic_ids) v[(size_t)id] += cx_tonic;
         std::vector<double>& front = dq.front();
         for (int i = 0; i < nN; i++) gg[(size_t)i] += front[(size_t)i];
         dq.pop_front();

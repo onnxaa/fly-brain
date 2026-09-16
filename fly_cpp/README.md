@@ -113,13 +113,16 @@ Ring attractor (`test-attractor`, rate): cx_cue landmark -> bump lands
 with correct sign (lumpy individual, ~1-2 ranks/step). Mechanism: rotation
 integrator (direction from PEN data: left-PEN +1.5 ranks) + K=2 maintenance
 over frozen EPG+D7+PEN weights (fan-norm, raw EM ratios, CX-local carry
-0.85). Spike: cue-evoked bump only (recipe spk2.0/GI2/u.08/bg2/plat.8);
-spike dark-hold/velocity = OPEN. Per-neuron homeostasis status: SHIPPED =
-compartment-local fan equalization (EB neurons scale EB inputs; flattens
-20x PEN wells); TRIED+REVERTED = static size gain (kills MB propagation,
-LIF cliff) and intrinsic-plasticity thresholds (too slow at ETA<=0.1,
-suppress+jump at 0.5) - see fly_api notes. VOL per-neuron data (Google
-segmentation, build_vol.py) stored for future compartment models.
+0.85). Spike FULL TRIPLE (deterministic tonic regime, test-attractor 8xPASS):
+recipe leak 0.9 + spk2.0/spk_inh2.5 + STD u.08 + bg 0 (NO Poisson variance)
++ plateau 1.0 + uniform tonic floor 0.06 + 4 cue steps. Dark holds, av+-3
+walks +-3 ranks/step both directions (rare well-capture pauses). Key insight:
+Poisson bg (2Hz = pure noise at 0.4 spikes/window) seeded WTA jumps; uniform
+tonic sustains reverberation without bias; plateau (principal cells only)
+bridges windows. Per-neuron homeostasis: SHIPPED = compartment-local fan
+equalization; TRIED+REVERTED = static size gain (kills MB, LIF cliff) and
+intrinsic thresholds (too slow/suppress+jump) - see fly_api notes. VOL
+per-neuron data (Google segmentation, build_vol.py) stored for models.
 Legacy CX_bump mapping bug fixed (pool indexed by rank -> argsort); legacy
 assays unaffected (loop armed only by cx_cue/angvel/set_cx_gain).
 

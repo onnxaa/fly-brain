@@ -677,7 +677,8 @@ class FlyBrainAPI:
         return None, None, c["ext"]
 
     def set_cx_gain(self, gain=None, iters=None, gain_inh=None, leak=None, spk=None,
-                      std_u=None, std_tau=None, bg=None, plat=None):
+                      std_u=None, std_tau=None, bg=None, plat=None,
+                      tonic=None, spk_inh=None):
         """EB ring-attractor protocol (neuromodulatory tone + timescale).
         Frozen FlyWire topology/signs/relative weights; only GLOBAL scalars:
         gain (ACh EPG/PEN excitation), gain_inh (glutamate D7 inhibition;
@@ -687,7 +688,12 @@ class FlyBrainAPI:
         (2 converges dark-hold; 1 integrates faster but may limit-cycle).
         gain=0 disables the loop. Returns (gain, gain_inh, iters, leak).
         Defaults (1.0, 1.0, 2, 0.85): raw EM ratios - dark holds, av walks
-        the bump with correct sign (lumpy individual: ~1-2 ranks/step)."""
+        the bump with correct sign (lumpy individual: ~1-2 ranks/step).
+        SPIKE recipe (full triple, deterministic tonic regime): leak 0.9 +
+        spk=2.0/spk_inh=2.5 + std_u=0.08 + bg=0 (no Poisson variance) +
+        plat=1.0 + tonic=0.06 + 4 cue steps. tonic = uniform deterministic
+        CX floor in mV/ms (mean-field background); bg = Poisson Hz (noisy,
+        seeds WTA jumps - keep 0 with tonic)."""
         self._cx_armed = True
         if gain is not None:
             self._cx_gain = float(gain)
@@ -708,7 +714,12 @@ class FlyBrainAPI:
             self._cx_bg = float(bg)
         if plat is not None:
             self._cx_plat_boost = float(plat)
-        # (spike E/I split: set _cx_gain_spk_inh directly; default 1.0)
+        if tonic is not None:
+            self._cx_tonic = float(tonic)
+        if spk_inh is not None:
+            self._cx_gain_spk_inh = float(spk_inh)
+            self._cx_spk_mask = None
+
         return (float(getattr(self, "_cx_gain", 1.0)),
                 float(getattr(self, "_cx_gain_inh", 1.0)),
                 int(getattr(self, "_cx_iters", 2)),
@@ -896,6 +907,14 @@ class FlyBrainAPI:
         # val units, decayed by leak (= inter-trial gap), injected as
         # v += p*BOOST each ms. CX-only. Default BOOST 0 = off.
         _pboost = float(getattr(self, "_cx_plat_boost", 0.0) or 0.0)
+        _tonic = float(getattr(self, "_cx_tonic", 0.0) or 0.0)
+        _tonicmask = None
+        if _tonic > 0 and self.mode in ("banc", "mcns") and ext is None:
+            _tonicmask = np.zeros(nN, bool)
+            for _pool in ("CX_EPG", "CX_D7", "CX_PEN"):
+                _pp = np.asarray(getattr(self, _pool, []), dtype=np.int32)
+                _pp = _pp[_pp < nN]
+                _tonicmask[_pp] = True
         _plat = None
         _platmask = None
         if (_pboost > 0 and self.mode in ("banc", "mcns") and ext is None):
@@ -1031,6 +1050,8 @@ class FlyBrainAPI:
             adapt *= DEC_A
             if _plat is not None:
                 v[_platmask] += _plat[_platmask] * _pboost
+            if _tonic > 0:
+                v[_tonicmask] += _tonic
             gg += dq.popleft()
             dq.append(np.zeros(nN, np.float64))
             if len(didx):

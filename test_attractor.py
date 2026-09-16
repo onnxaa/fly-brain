@@ -61,14 +61,39 @@ md = [m.step().get("CX_bump", -99) for _ in range(4)]
 # looser bound: functional (unvalidated) ring = deeper wells
 check("mcns-dark", max(abs(circ_dist(x, md[0])) for x in md) <= 10, f"{md}")
 
-# ---- spike, banc: cue only ----
-s = FlyBrainAPI(mode="banc", path=".")
-s.set_state(0.9); s.set_activation("spike")
-s.set_cx_gain(spk=2.0, std_u=0.08, bg=2.0, plat=0.8)
-s._cx_gain_spk_inh = 2.0; s._cx_spk_mask = None
-o = s.step(cx_cue=cue); o = s.step(cx_cue=cue)
+# ---- spike, banc: full triple (deterministic tonic regime) ----
+# recipe: near-seamless windows (leak 0.9) + plateau sustain + uniform tonic
+# floor (mean-field background, NO Poisson variance -> no WTA jumps) +
+# GI 2.5. Deterministic: identical trajectories run-to-run.
+def spk_run(ncue=4):
+    s = FlyBrainAPI(mode="banc", path="."); s.set_state(0.9); s.set_activation("spike")
+    s.set_cx_gain(spk=2.0, spk_inh=2.5, std_u=0.08, bg=0.0, plat=1.0, tonic=0.06)
+    for _ in range(ncue):
+        o = s.step(cx_cue=cue)
+    return s, o
+
+
+s, o = spk_run()
 check("spike-cue", abs(circ_dist(o.get("CX_bump", -99), 23)) <= 6 and o.get("CX_EPG", 0) > 0,
       f"bump={o.get('CX_bump')} CX_EPG={o.get('CX_EPG', -1):.2f}")
+
+
+def sread(st, **kw):
+    oo = st.step(**kw)
+    return oo.get("CX_bump", -99), oo.get("CX_EPG", -1)
+
+
+sd = [sread(s) for _ in range(7)][1:]  # 1 settle step
+sdb = [x[0] for x in sd]
+check("spike-dark", max(abs(circ_dist(x, sdb[0])) for x in sdb) <= 6 and min(x[1] for x in sd) >= 0.3,
+      f"{sd}")
+for AV, sgn in ((3.0, 1), (-3.0, -1)):
+    s2, _ = spk_run()
+    tr = [sread(s2, angvel=AV) for _ in range(6)]
+    trb = [x[0] for x in tr]
+    disp = sum(circ_dist(trb[i + 1], trb[i]) for i in range(len(trb) - 1))
+    check(f"spike-av{AV:+}", (disp > 0) == (sgn > 0) and abs(disp) >= 4
+          and min(x[1] for x in tr) >= 0.3, f"{tr}")
 
 print("ALL PASS" if not fails else f"FAILURES: {fails}", flush=True)
 raise SystemExit(1 if fails else 0)

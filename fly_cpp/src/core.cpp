@@ -402,11 +402,13 @@ float FlyBrain::set_state(float leak) {
 }
 void FlyBrain::set_cx_gain(float gain, float gain_inh, int iters,
                             float leak, float spk, float spk_inh,
-                            float std_u, float std_tau, float bg, float plat) {
+                            float std_u, float std_tau, float bg, float plat,
+                            float tonic) {
     cx_armed = true;
     cx_gain = gain; cx_gain_inh = gain_inh; cx_iters = iters; cx_leak = leak;
     cx_spk_gain = spk; cx_spk_inh = spk_inh;
     cx_std_u = std_u; cx_std_tau = std_tau; cx_bg = bg; cx_plat_boost = plat;
+    cx_tonic = tonic;
     cx_cached_n = -1; cx_spk_cached_n = -1; // rebuild masks
 }
 
@@ -927,7 +929,7 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
         }
     }
     bool spk = (act == "spike");
-    std::vector<float> h = spk ? forward_spike(idx, vuse, s.angvel) : forward_pure(idx, vuse, hh, thr);
+    std::vector<float> h = spk ? forward_spike(idx, vuse, false, s.angvel) : forward_pure(idx, vuse, hh, thr);
     if (!spk) h = cx_loop(h, idx, vuse, thr, s.angvel);
     // KC top-5%
     size_t nKC = KC.size();
