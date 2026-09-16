@@ -360,6 +360,12 @@ void FlyBrain::set_hops(int h) {
 }
 int FlyBrain::get_hops() const { return hops; }
 
+void FlyBrain::set_scaling(const std::string& s) {
+    if (s != "static" && s != "active") throw std::runtime_error("scaling must be 'static' or 'active'");
+    scaling = (s == "active") ? 1 : 0;
+}
+std::string FlyBrain::get_scaling() const { return scaling ? "active" : "static"; }
+
 void FlyBrain::set_activation(const std::string& name, float sat, int Tms, int seed,
                               float wdrv, float ainc, float rmax, float adapt, int burn) {
     if (name != "relu" && name != "lif" && name != "spike")
@@ -613,6 +619,7 @@ std::vector<float> FlyBrain::forward_pure(const std::vector<int32_t>& idx,
         f_base.assign((size_t)N, 0.0f);
         f_a.assign((size_t)N, 0.0f);
         f_agg.assign((size_t)N, 0.0f);
+        f_fan.assign((size_t)N, 1.0f);
     }
     std::fill(f_base.begin(), f_base.begin() + N, 0.0f);
     for (size_t i = 0; i < idx.size(); i++) {
@@ -627,21 +634,27 @@ std::vector<float> FlyBrain::forward_pure(const std::vector<int32_t>& idx,
     const float* __restrict__ bs = f_base.data();
     float* __restrict__ av = f_a.data();
     float* __restrict__ ag = f_agg.data();
+    float* __restrict__ af = f_fan.data();
     int n = N;
     bool big = (n > 10000);
+    bool active = (scaling == 1);
     if (act_id == 1) {
         float sat = lif_sat;
         for (int h = 0; h < hh; h++) {
             #pragma omp parallel for schedule(static) if(big)
             for (int q = 0; q < n; q++) {
-                float s = 0;
-                for (int64_t e = hd[q]; e < hd[q + 1]; e++)
-                    s += av[(size_t)cp[(size_t)e]] * sw[(size_t)e];
-                ag[q] = s;
+                float s = 0, f = 0;
+                for (int64_t e = hd[q]; e < hd[q + 1]; e++) {
+                    float a = av[(size_t)cp[(size_t)e]];
+                    s += a * sw[(size_t)e];
+                    if (active && a > 0) f += std::fabs(sw[(size_t)e]);
+                }
+                ag[q] = s; af[q] = f;
             }
             #pragma omp parallel for schedule(static) if(big)
             for (int q = 0; q < n; q++) {
-                float v = ag[q] / (fn[q] + 1e-6f) - thr;
+                float denom = active ? af[q] : (fn[q] + 1e-6f);
+                float v = (active && af[q] <= 1e-9f) ? 0.0f : ag[q] / denom - thr;
                 av[q] = (v > 0 ? sat * (1.0f - std::exp(-v / sat)) : 0.0f) + bs[q];
             }
         }
@@ -649,14 +662,18 @@ std::vector<float> FlyBrain::forward_pure(const std::vector<int32_t>& idx,
         for (int h = 0; h < hh; h++) {
             #pragma omp parallel for schedule(static) if(big)
             for (int q = 0; q < n; q++) {
-                float s = 0;
-                for (int64_t e = hd[q]; e < hd[q + 1]; e++)
-                    s += av[(size_t)cp[(size_t)e]] * sw[(size_t)e];
-                ag[q] = s;
+                float s = 0, f = 0;
+                for (int64_t e = hd[q]; e < hd[q + 1]; e++) {
+                    float a = av[(size_t)cp[(size_t)e]];
+                    s += a * sw[(size_t)e];
+                    if (active && a > 0) f += std::fabs(sw[(size_t)e]);
+                }
+                ag[q] = s; af[q] = f;
             }
             #pragma omp parallel for schedule(static) if(big)
             for (int q = 0; q < n; q++) {
-                float v = ag[q] / (fn[q] + 1e-6f) - thr;
+                float denom = active ? af[q] : (fn[q] + 1e-6f);
+                float v = (active && af[q] <= 1e-9f) ? 0.0f : ag[q] / denom - thr;
                 av[q] = (v > 0 ? v : 0.0f) + bs[q];
             }
         }

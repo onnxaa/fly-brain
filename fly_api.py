@@ -318,6 +318,7 @@ class FlyBrainAPI:
         # (R reaches 5% of KC in 2 hops, more in 3-4) but noisier/attenuated.
         # mb default 1 (MBON readout is the analytic 2nd hop).
         self._hops = 1 if mode == "mb" else 2
+        self._scaling = "static"  # see set_scaling(); default keeps every validation
 
         # activation: 'relu' (fast legacy) or 'lif' (saturating LIF-shaped rate).
         # 'lif' is NOT the exact log-form steady state: measured on our
@@ -1019,6 +1020,22 @@ class FlyBrainAPI:
             self._fan = fan.astype(np.float32)
         return "computed"
 
+    def set_scaling(self, mode="static"):
+        """Normalization regime for the pure forward passes (protocol, no data change).
+        'static' (default): divide by total |fan-in| (weighted mean; all PASS numbers).
+        'active': divide by ACTIVE |fan-in| (sum over currently-firing inputs only).
+        Active preserves signal along firing paths at any depth (deep vision lives:
+        banc bars reach KC/DN/legs), static attenuates deep chains ~10-100x/hop.
+        Active has no free parameters; default stays static so every validation holds."""
+        if mode not in ("static", "active"):
+            raise ValueError("scaling must be 'static' or 'active'")
+        self._scaling = mode
+        return self._scaling
+
+    def get_scaling(self):
+        """Current normalization regime."""
+        return str(getattr(self, "_scaling", "static"))
+
     def _forward_pure_mb(self, idx, val, hops=1, thr=0.0):
         if getattr(self, "_fan", None) is None:
             self.enable_scaling()
@@ -1029,10 +1046,20 @@ class FlyBrainAPI:
         a = base.copy()
         sw = self.wM*self.sign
         for _ in range(hops):
-            msg = a[self.pre]*sw
-            agg = np.zeros(self.N, dtype=np.float32)
-            np.add.at(agg, self.post, msg)
-            agg /= (self._fan + 1e-6)
+            if str(getattr(self, "_scaling", "static")) == "active":
+                on = (a > 0)
+                msg = a[self.pre]*sw*on[self.pre]
+                agg = np.zeros(self.N, dtype=np.float32)
+                np.add.at(agg, self.post, msg)
+                fan = np.zeros(self.N, dtype=np.float32)
+                np.add.at(fan, self.post, np.abs(sw)*on[self.pre])
+                agg = np.divide(agg, np.maximum(fan, 1e-9),
+                                out=np.zeros_like(agg), where=fan > 1e-9)
+            else:
+                msg = a[self.pre]*sw
+                agg = np.zeros(self.N, dtype=np.float32)
+                np.add.at(agg, self.post, msg)
+                agg /= (self._fan + 1e-6)
             a = self._activate(agg - thr) + base
         return a
 
@@ -1062,12 +1089,24 @@ class FlyBrainAPI:
         a = base.copy()  # stimulus = current source (clamp), not initial state
         sw = (self.wM*self.sign).astype(_np.float32)  # TRAINABLE weights (not static parquet)
         CH = 2000000
+        active = str(getattr(self, "_scaling", "static")) == "active"
         for _ in range(hops):
             agg = _np.zeros(self.N, dtype=_np.float32)
-            for s in range(0, self.E, CH):
-                e = slice(s, min(s+CH, self.E))
-                _np.add.at(agg, self.post[e], a[self.pre[e]]*sw[e])
-            agg /= (self._fan + 1e-6)
+            if active:
+                on = (a > 0)
+                fan = _np.zeros(self.N, dtype=_np.float32)
+                for s in range(0, self.E, CH):
+                    e = slice(s, min(s+CH, self.E))
+                    m = on[self.pre[e]]
+                    _np.add.at(agg, self.post[e], a[self.pre[e]]*sw[e]*m)
+                    _np.add.at(fan, self.post[e], _np.abs(sw[e])*m)
+                agg = _np.divide(agg, _np.maximum(fan, 1e-9),
+                                 out=_np.zeros_like(agg), where=fan > 1e-9)
+            else:
+                for s in range(0, self.E, CH):
+                    e = slice(s, min(s+CH, self.E))
+                    _np.add.at(agg, self.post[e], a[self.pre[e]]*sw[e])
+                agg /= (self._fan + 1e-6)
             a = self._activate(agg - thr) + base
         return a
 

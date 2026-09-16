@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
     std::string mech_bin;
     bool use_vnc = false;
     int steps = -1, test_n = -1, n_switch = -1;
+    std::string scaling, img_bin; int imgH = 0, imgW = 0;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto need = [&](std::string& dst) { dst = argv[++i]; };
@@ -49,6 +50,10 @@ int main(int argc, char** argv) {
         else if (a == "--test") test_n = std::stoi(argv[++i]);
         else if (a == "--n-switch") n_switch = std::stoi(argv[++i]);
         else if (a == "--seed") { ++i; }
+        else if (a == "--scaling") need(scaling);
+        else if (a == "--img-bin") need(img_bin);
+        else if (a == "--img-h") imgH = std::stoi(argv[++i]);
+        else if (a == "--img-w") imgW = std::stoi(argv[++i]);
         else if (a[0] != '-') cmd = a;
     }
     if (cmd.empty()) { usage(); return 1; }
@@ -91,6 +96,7 @@ int main(int argc, char** argv) {
     b.enable_scaling();
     if (use_vnc) b.enable_vnc();
     if (!act.empty()) b.set_activation(act);
+    if (!scaling.empty()) b.set_scaling(scaling);
     if (!w_in.empty()) b.load_wbin(w_in);
     if (cmd == "info") {
         std::printf("mode=%s N=%d E=%lld EI=%.1f\n", mode.c_str(), b.N, (long long)b.E,
@@ -108,6 +114,12 @@ int main(int argc, char** argv) {
         size_t n = fly::file_size(mech_bin) / 4;
         s.has_mech = true;
         s.mech = fly::load_f32(mech_bin, n);
+    }
+    if (!img_bin.empty()) {
+        size_t n = fly::file_size(img_bin) / 4;
+        s.has_image = true;
+        s.image = fly::load_f32(img_bin, n);
+        s.imgH = imgH > 0 ? imgH : 64; s.imgW = imgW > 0 ? imgW : 64;
     }
     if (cmd == "step") {
         fly::Out o = b.step(s, hops, thr);

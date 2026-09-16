@@ -68,6 +68,17 @@ Parity: banc geosmin MB +0.0532, mcns −4.3808, motor pools — all identical
 to Python. Batteries (tmaze/...) stay full-mode (FAFB-validated); bench
 works in every mode.
 
+## Scaling regimes (`--scaling static|active`)
+
+`static` (default): divide by total |fan-in| — every number in this repo.
+`active`: divide by ACTIVE |fan-in| only — signal survives any depth.
+Use active for deep vision (`--hops 4`): banc bars reach KC/DN/legs
+(DN~0.10, legs lateralized, wing~0.21). No free parameters, no avalanche
+(peak 4 hops, graceful decay to 8). Default stays static (all validations).
+Parity: bit-identical at 2 hops (banc +10.1793, mcns −365.8993); at 4+
+hops behavior-class (means match ~10%, MB_pref exact value diverges —
+difference of two large means + FP order chaos; lateralization preserved).
+
 ## Batteries across modes (CNS-agnostic protocols)
 
 `tmaze|spaced|heatbox(_ctl)|test-x|test-std|test-sleep` take `--mode` since
