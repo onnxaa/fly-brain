@@ -98,8 +98,39 @@ R2 = np.where(isR)[0].astype(np.int32)
 S2 = np.asarray(mk.rootSide.fillna("").astype(str), dtype=str)[R2]
 print(f"MCNS R: n={len(R2)} eye-split only (L={(S2=='L').sum()}/R={(S2=='R').sum()})")
 rm = dict(np.load("male_roles.npz", allow_pickle=True))
+# ---- MCNS homology retinotopy (BANC malecns_match -> BANC position) ----
+# 404/4107 MCNS R match BANC R7/R8 (100% type-consistent). RF = rank-norm of
+# matched BANC coords among themselves. Unmatched stay eye-mean (no fabrication).
+bm=pd.read_feather("banc_meta.feather", columns=["banc_888_id","cell_type","position","malecns_match"])
+bct=np.asarray(bm.cell_type.fillna("").astype(str),dtype=str)
+bisR=np.array([bool(re.match(r"^R[78]",x)) for x in bct])
+bpos_map={}
+for i in np.where(bisR)[0]:
+    mm=str(bm.malecns_match.fillna("").astype(str).values[i])
+    if not mm: continue
+    try:
+        x,y,_=[float(v) for v in str(bm.position.fillna("").astype(str).values[i]).split(",")]
+        bpos_map.setdefault(mm,[]).append((x,y))
+    except Exception: pass
+bpos_mean={k:(float(np.mean([p[0] for p in v])),float(np.mean([p[1] for p in v]))) for k,v in bpos_map.items()}
+mbids=np.asarray(mk.bodyId.values,dtype=np.int64)
+h_ids, h_xy=[],[]
+for li in R2:
+    mm=str(int(mbids[li]))
+    if mm in bpos_mean:
+        h_ids.append(int(li)); h_xy.append(bpos_mean[mm])
+h_ids=np.array(h_ids,np.int32); h_xy=np.array(h_xy)
+ox=np.argsort(h_xy[:,0],kind="stable"); oy=np.argsort(h_xy[:,1],kind="stable")
+hcx=np.empty(len(h_ids)); hcy=np.empty(len(h_ids))
+hcx[ox]=np.arange(len(h_ids))/max(1,len(h_ids)-1)
+hcy[oy]=np.arange(len(h_ids))/max(1,len(h_ids)-1)
+print(f"MCNS homology RF: {len(h_ids)}/{len(R2)} anchored")
+rm = dict(np.load("male_roles.npz", allow_pickle=True))
 rm["R"] = R2.astype(np.int32)
 rm["R_side"] = np.array(S2)
+rm["Rret"] = h_ids.astype(np.int32)
+rm["Rret_cx"] = hcx.astype(np.float32)
+rm["Rret_cy"] = hcy.astype(np.float32)
 np.savez_compressed("male_roles.npz", **rm)
 print("patched male_roles.npz")
 print("PASS-rf-build", flush=True)

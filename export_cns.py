@@ -72,6 +72,10 @@ for mode, circ, roles in (("banc", "banc_circuit.npz", "banc_roles.npz"),
     if "R" in r:
         rr = np.asarray(r["R"]).astype(np.int32)
         w(f"{mode}_R", rr)
+        if "Rret" in r:
+            w(f"{mode}_Rret", np.asarray(r["Rret"]).astype(np.int32))
+            w(f"{mode}_Rret_cx", np.asarray(r["Rret_cx"]).astype(np.float32))
+            w(f"{mode}_Rret_cy", np.asarray(r["Rret_cy"]).astype(np.float32))
         if "R_cx" in r:
             w(f"{mode}_R_cx", np.asarray(r["R_cx"]).astype(np.float32))
             w(f"{mode}_R_cy", np.asarray(r["R_cy"]).astype(np.float32))

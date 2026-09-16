@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <numeric>
 #include <stdexcept>
 #include <unordered_set>
@@ -106,6 +107,12 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         R = need(p+"_R");
         try { R_cx = LF(p+"_R_cx"); R_cy = LF(p+"_R_cy"); } catch (...) {}
         try { R_L = L32(p+"_R_L"); R_R = L32(p+"_R_R"); } catch (...) {}
+        try {
+            Rret = L32(p+"_Rret"); Rret_cx = LF(p+"_Rret_cx"); Rret_cy = LF(p+"_Rret_cy");
+            std::unordered_set<int32_t> rm(Rret.begin(), Rret.end());
+            for (auto id : R_L) if (!rm.count(id)) R_LU.push_back(id);
+            for (auto id : R_R) if (!rm.count(id)) R_RU.push_back(id);
+        } catch (...) {}
         try {
             L1v = L32(p+"_L1"); L1cx = LF(p+"_L1_cx"); L1cy = LF(p+"_L1_cy");
             L2v = L32(p+"_L2"); L2cx = LF(p+"_L2_cx"); L2cy = LF(p+"_L2_cy");
@@ -579,6 +586,19 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
         if (!R_cx.empty() && R_cx.size() == R.size()) {
             std::vector<float> rv = sample_R(g, s.imgH, s.imgW);
             for (size_t i = 0; i < R.size(); i++) { idx.push_back(R[i]); val.push_back(rv[i]*2.0f); }
+        } else if (!Rret.empty() && Rret_cx.size() == Rret.size()) {
+            // homology-anchored RF (mcns) + eye-mean for unmapped
+            std::vector<float> rr = sample_at(g, s.imgH, s.imgW, Rret_cx, Rret_cy);
+            for (size_t i = 0; i < Rret.size(); i++) { idx.push_back(Rret[i]); val.push_back(rr[i]*2.0f); }
+            double lv = 0, rv2 = 0;
+            for (int y = 0; y < s.imgH; y++)
+                for (int x = 0; x < s.imgW; x++) {
+                    float v = g[(size_t)y * s.imgW + x];
+                    if (x < s.imgW / 2) lv += v; else rv2 += v;
+                }
+            lv /= (s.imgH * (s.imgW / 2)); rv2 /= (s.imgH * (s.imgW - s.imgW / 2));
+            for (auto id : R_LU) { idx.push_back(id); val.push_back((float)lv * 2.0f); }
+            for (auto id : R_RU) { idx.push_back(id); val.push_back((float)rv2 * 2.0f); }
         } else if (!R_L.empty() && !R_R.empty()) {
             // honest eye split (no per-neuron RF): mean halves -> R_L/R_R
             double lv = 0, rv2 = 0;
@@ -985,14 +1005,40 @@ void FlyBrain::sleep(int episodes, float rate) {
 void FlyBrain::save_wbin(const std::string& path) {
     FILE* f=std::fopen(path.c_str(),"wb");
     if(!f) throw std::runtime_error("save open: "+path);
+    // header: magic(8) + mode(16, nul-padded) + N(i64) + E(i64); legacy files stay loadable
+    char magic[8] = {'F','L','Y','W','B','I','N','1'};
+    char mbuf[16] = {0};
+    std::snprintf(mbuf, sizeof(mbuf), "%s", mode.c_str());
+    int64_t hh[2] = {(int64_t)N, (int64_t)E};
+    std::fwrite(magic, 1, 8, f);
+    std::fwrite(mbuf, 1, 16, f);
+    std::fwrite(hh, sizeof(int64_t), 2, f);
     std::fwrite(wM.data(), sizeof(float), wM.size(), f);
     std::fclose(f);
 }
 void FlyBrain::load_wbin(const std::string& path) {
-    size_t n=file_size(path)/4;
-    if(n!=wM.size()) throw std::runtime_error("wbin size mismatch");
+    size_t nb=file_size(path);
     FILE* f=std::fopen(path.c_str(),"rb");
     if(!f) throw std::runtime_error("load open: "+path);
+    size_t n;
+    char magic[8];
+    if (nb >= 8 && std::fread(magic, 1, 8, f) == 8 &&
+        std::memcmp(magic, "FLYWBIN1", 8) == 0) {
+        char mbuf[16]; int64_t hh[2];
+        if (std::fread(mbuf, 1, 16, f) != 16 || std::fread(hh, sizeof(int64_t), 2, f) != 2) {
+            std::fclose(f); throw std::runtime_error("wbin: truncated header");
+        }
+        std::string fmode(mbuf, strnlen(mbuf, 16));
+        if (fmode != mode)
+            { std::fclose(f); throw std::runtime_error("wbin mode mismatch: file=" + fmode + " brain=" + mode); }
+        if (hh[0] != (int64_t)N || hh[1] != (int64_t)E)
+            { std::fclose(f); throw std::runtime_error("wbin N/E mismatch (X-growth changes E)"); }
+        n = (nb - 40) / 4;
+    } else {
+        std::rewind(f);
+        n = nb / 4;
+    }
+    if(n!=wM.size()) { std::fclose(f); throw std::runtime_error("wbin size mismatch"); }
     size_t r=std::fread(wM.data(), sizeof(float), n, f);
     std::fclose(f);
     if(r!=n) throw std::runtime_error("short read wbin");

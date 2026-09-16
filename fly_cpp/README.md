@@ -79,6 +79,21 @@ Parity: bit-identical at 2 hops (banc +10.1793, mcns −365.8993); at 4+
 hops behavior-class (means match ~10%, MB_pref exact value diverges —
 difference of two large means + FP order chaos; lateralization preserved).
 
+## MCNS retinotopy via BANC homology + wbin headers
+
+MCNS flat files carry no R coordinates — but BANC `malecns_match` links 384
+MCNS R neurons to BANC R7/R8 (100% type-consistent, side agreement 54-0
+where known). Their RF transfers by homology (rank-norm among themselves);
+the rest stay eye-mean. Result: mcns train_fix ±1.44 monotonic (was ±1.0
+saturated eye-split), buridan STEER 65% vs BASE 33%. Propagation past R
+still dies in rate mode (histamine synapse, same as FAFB) — fix readouts
+tap R directly. Lesson logged: an earlier run drove hemifields while
+reading retinotopic pools (mush) — drive and readout must match.
+
+wbin v2: 40B header (magic FLYWBIN1 + mode + N + E); cross-mode loads fail
+fast (`wbin mode mismatch: file=mcns brain=banc`); legacy headerless files
+still load (size check as before).
+
 ## Batteries across modes (CNS-agnostic protocols)
 
 `tmaze|spaced|heatbox(_ctl)|test-x|test-std|test-sleep` take `--mode` since

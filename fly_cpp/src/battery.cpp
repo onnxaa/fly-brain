@@ -110,13 +110,19 @@ FlyBrain make_fix_api(const std::string& data, const std::string& mode) {
     FlyBrain api(mode, data);
     api.enable_scaling();
     std::vector<int32_t> pL, pR;
-    if (api.R_cx.size() == api.R.size() && !api.R.empty()) {
+    if (api.Rret_cx.size() == api.Rret.size() && !api.Rret.empty()) {
+        // homology-anchored RF (mcns): finer than hemifields
+        for (size_t i = 0; i < api.Rret.size(); i++) {
+            if (api.Rret_cx[i] < 0.4f) pL.push_back(api.Rret[i]);
+            if (api.Rret_cx[i] > 0.6f) pR.push_back(api.Rret[i]);
+        }
+    } else if (api.R_cx.size() == api.R.size() && !api.R.empty()) {
         for (size_t i = 0; i < api.R.size(); i++) {
             if (api.R_cx[i] < 0.4f) pL.push_back(api.R[i]);
             if (api.R_cx[i] > 0.6f) pR.push_back(api.R[i]);
         }
     } else {
-        // eye split only (mcns): coarse hemifield pools
+        // eye split only: coarse hemifield pools
         pL = api.R_L; pR = api.R_R;
     }
     if (pL.empty() || pR.empty()) throw std::runtime_error("fixation needs R_cx or R_L/R pools");

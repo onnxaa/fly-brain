@@ -240,6 +240,12 @@ class FlyBrainAPI:
             _rs = np.asarray(r["R_side"]).astype(str) if "R_side" in r else np.zeros(0)
             self.R_L = self.R[_rs == "L"] if len(_rs) == len(self.R) else np.zeros(0, np.int32)
             self.R_R = self.R[_rs == "R"] if len(_rs) == len(self.R) else np.zeros(0, np.int32)
+            self.Rret = np.asarray(r["Rret"], dtype=np.int32) if "Rret" in r else np.zeros(0, np.int32)
+            self.Rret_cx = np.asarray(r["Rret_cx"], dtype=np.float32) if "Rret_cx" in r else np.zeros(0, np.float32)
+            self.Rret_cy = np.asarray(r["Rret_cy"], dtype=np.float32) if "Rret_cy" in r else np.zeros(0, np.float32)
+            _rm = set(int(x) for x in self.Rret)
+            self.R_LU = np.array([x for x in self.R_L if int(x) not in _rm], dtype=np.int32)
+            self.R_RU = np.array([x for x in self.R_R if int(x) not in _rm], dtype=np.int32)
             self.MOTOR = np.asarray(r["MOTOR"], dtype=np.int32)
             self.MOTOR_leg_L = np.asarray(r["leg_L"], dtype=np.int32)
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
@@ -917,32 +923,36 @@ class FlyBrainAPI:
             if not len(getattr(self, "R", [])):
                 raise ValueError("images require R photoreceptors (full/banc/mcns, not mb)")
             if self.mode == "mcns":
-                # honest eye split (no per-neuron RF in MCNS v1.0 flat files):
-                # mean(left half) -> R_L, mean(right half) -> R_R.
+                # homology-anchored RF where available (BANC malecns_match),
+                # eye-mean for the rest (no fabrication).
                 g = self._gray(image)
                 Hh, Ww = g.shape
+                if len(getattr(self, "Rret", [])):
+                    idx.append(self.Rret)
+                    val.append((self._sample_at(self.Rret_cx, self.Rret_cy, g) * 2.0).astype(np.float32))
                 lv = float(g[:, :Ww // 2].mean()); rv = float(g[:, Ww // 2:].mean())
-                idx.append(self.R_L); val.append(np.full(len(self.R_L), lv * 2.0, np.float32))
-                idx.append(self.R_R); val.append(np.full(len(self.R_R), rv * 2.0, np.float32))
+                idx.append(self.R_LU); val.append(np.full(len(self.R_LU), lv * 2.0, np.float32))
+                idx.append(self.R_RU); val.append(np.full(len(self.R_RU), rv * 2.0, np.float32))
                 mot, _ = self._motion_energies(self._small16(g))
                 info["motion"] = mot
-            if self.mode not in ("full", "banc"):
-                raise ValueError("images require mode='full'/'banc' (retinotopic R) or 'mcns' (eye split)")
-            # Phototransduction only: each R cell samples the image at its own
-            # receptive field (bilinear + Gaussian RF). No grid, no bins.
-            g = self._gray(image)
-            idx.append(self.R)
-            val.append((self._sample_R(g) * 2.0).astype(np.float32))
-            if self.mode == "banc" and len(getattr(self, "L1", [])):
-                # luminance proxy (R1-6 absent in BANC v888): drive their L1/L2
-                # targets at column RF. Labeled proxy, not photoreceptors.
-                idx.append(self.L1)
-                val.append((self._sample_at(self.L1_cx, self.L1_cy, g) * 2.0).astype(np.float32))
-                idx.append(self.L2)
-                val.append((self._sample_at(self.L2_cx, self.L2_cy, g) * 2.0).astype(np.float32))
-            # Reichardt motion: readout ONLY (info), never injected into ME - no mapping data
-            mot, _ = self._motion_energies(self._small16(g))
-            info["motion"] = mot
+            if self.mode not in ("full", "banc", "mcns"):
+                raise ValueError("images require a CNS mode with R photoreceptors")
+            if self.mode in ("full", "banc"):
+                # Phototransduction only: each R cell samples the image at its own
+                # receptive field (bilinear + Gaussian RF). No grid, no bins.
+                g = self._gray(image)
+                idx.append(self.R)
+                val.append((self._sample_R(g) * 2.0).astype(np.float32))
+                if self.mode == "banc" and len(getattr(self, "L1", [])):
+                    # luminance proxy (R1-6 absent in BANC v888): drive their L1/L2
+                    # targets at column RF. Labeled proxy, not photoreceptors.
+                    idx.append(self.L1)
+                    val.append((self._sample_at(self.L1_cx, self.L1_cy, g) * 2.0).astype(np.float32))
+                    idx.append(self.L2)
+                    val.append((self._sample_at(self.L2_cx, self.L2_cy, g) * 2.0).astype(np.float32))
+                # Reichardt motion: readout ONLY (info), never injected into ME - no mapping data
+                mot, _ = self._motion_energies(self._small16(g))
+                info["motion"] = mot
         if not idx:
             Iv, Vv = np.zeros(0, np.int32), np.zeros(0, np.float32)
         else:
