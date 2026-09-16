@@ -477,9 +477,10 @@ static int sleep_bout(FlyBrain& api, int want_asleep, int max_steps = 120) {
     return slept;
 }
 static void spaced_setup(FlyBrain& api, const std::string& mode) {
-    if (mode == "full") api.enable_clock();
+    // clock pools exist per mode now (FAFB/BANC/MCNS TTFL neurons)
+    api.enable_clock();
     api.enable_auto_sleep(1.0f);
-    if (mode == "full") api.tick_clock(12, 0.0f);
+    api.tick_clock(12, 0.0f);
 }
 static float spaced_pi(FlyBrain& api) {
     float s = api.step(s_odor("ethyl_hexanoate")).MB_pref;
@@ -495,17 +496,17 @@ void spaced(const std::string& data, const std::string& mode) {
     spaced_setup(s, mode);
     for (int i = 0; i < 5; i++) {
         s.train(s_odor("methyl_salicylate"), 0.0f, 1.0f);
-        if (mode == "full") s.tick_clock(2, 0.0f);
+        s.tick_clock(2, 0.0f);
         sleep_bout(s, 4);
     }
     std::printf("spaced immediate PI=%+.2f (expect ~= massed: no interference mechanism)\n",
                 spaced_pi(s));
     spaced_setup(m, mode);
-    if (mode == "full") m.tick_clock(12, 0.0f);
+    m.tick_clock(12, 0.0f);
     int n1 = sleep_bout(m, 40);
     std::printf("massed retention PI=%+.2f after 24h + %d sleep steps (SHY wash = the only forgetting)\n",
                 spaced_pi(m), n1);
-    if (mode == "full") s.tick_clock(12, 0.0f);
+    s.tick_clock(12, 0.0f);
     int n2 = sleep_bout(s, 40);
     std::printf("spaced retention PI=%+.2f after 24h + %d sleep steps (no consolidation: no LTM/ARM split)\n",
                 spaced_pi(s), n2);

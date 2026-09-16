@@ -143,10 +143,11 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         }
     } catch (...) {}
     try {
-        taste_idx["sugar"] = L32("taste_sugar");
-        taste_idx["bitter"] = L32("taste_bitter");
-        taste_idx["water"] = L32("taste_water");
-        taste_idx["ir94e"] = L32("taste_ir94e");
+        std::string tp = (mode == "full") ? "taste" : p + "_taste";
+        taste_idx["sugar"] = L32(tp + "_sugar");
+        taste_idx["bitter"] = L32(tp + "_bitter");
+        taste_idx["water"] = L32(tp + "_water");
+        taste_idx["ir94e"] = L32(tp + "_ir94e");
     } catch (...) {}
     try { odorA = L32("mb_odorA"); odorB = L32("mb_odorB"); } catch (...) {}
     // spike caches
@@ -158,7 +159,10 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
             sp_a2k_w = LF("spike_a2k_w"); sp_a2k_apl = L32("spike_a2k_apl");
         }
     } catch (...) {}
-    try { clock_M = L32("clock_M"); clock_E = L32("clock_E"); } catch (...) {}
+    try {
+        std::string cp = (mode == "full") ? "clock" : p + "_clock";
+        clock_M = L32(cp + "_M"); clock_E = L32(cp + "_E");
+    } catch (...) {}
     // real VNC (MANC): data present => has_vnc_data; runs only after enable_vnc()
     try {
         vpre = L32("vnc_pre"); vpost = L32("vnc_post");
@@ -495,7 +499,7 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
     if (s.has_odor_str) {
         const std::string& o = s.odor_str;
         if (o=="sugar"||o=="bitter"||o=="water"||o=="ir94e") {
-            if (mode != "full") throw std::runtime_error("GRN tastes require mode='full'");
+            if (mode != "full" && mode != "banc" && mode != "mcns") throw std::runtime_error("GRN tastes need a CNS mode");
             auto it = taste_idx.find(o);
             if (it == taste_idx.end()) throw std::runtime_error("missing taste table");
             for (auto id : it->second) { idx.push_back(id); val.push_back(2.0f); }

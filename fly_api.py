@@ -195,6 +195,9 @@ class FlyBrainAPI:
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
             self.MOTOR_wing = np.asarray(r["wing"], dtype=np.int32)
             self.MOTOR_neck = np.asarray(r["neck"], dtype=np.int32)
+            self.CLOCK_M = np.asarray(r["CLOCK_M"], dtype=np.int32) if "CLOCK_M" in r else np.zeros(0, np.int32)
+            self.CLOCK_E = np.asarray(r["CLOCK_E"], dtype=np.int32) if "CLOCK_E" in r else np.zeros(0, np.int32)
+            self.GRN = np.asarray(r["GRN"], dtype=np.int32) if "GRN" in r else np.zeros(0, np.int32)
             self._img_proj = None
             self._pf = None
             self._last_small = None
@@ -242,6 +245,9 @@ class FlyBrainAPI:
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
             self.MOTOR_wing = np.asarray(r["wing"], dtype=np.int32)
             self.MOTOR_neck = np.asarray(r["neck"], dtype=np.int32)
+            self.CLOCK_M = np.asarray(r["CLOCK_M"], dtype=np.int32) if "CLOCK_M" in r else np.zeros(0, np.int32)
+            self.CLOCK_E = np.asarray(r["CLOCK_E"], dtype=np.int32) if "CLOCK_E" in r else np.zeros(0, np.int32)
+            self.GRN = np.asarray(r["GRN"], dtype=np.int32) if "GRN" in r else np.zeros(0, np.int32)
             self._img_proj = None
             self._pf = None
             self._last_small = None
@@ -342,6 +348,10 @@ class FlyBrainAPI:
         self._spike_adapt = 1.0 if mode == "mb" else 0.2  # drive floor
         if mode == "mb":
             self._spike_ainc = 0.0
+        if mode == "mcns":
+            # denser MB (61k KC->MBON): stronger SFA keeps MBON<70Hz on DoOR
+            # odors (calibrated geosmin/ethyl; KC still denser than Shiu MB-only)
+            self._spike_ainc = 16.0
         self._spike_burn = 0 if mode == "mb" else 50  # onset ms not counted
         self._spike_cache = {}
         # real VNC (MANC v1.2.1, Takemura/Marin/Cheong eLife 2024): opt-in,
@@ -583,6 +593,15 @@ class FlyBrainAPI:
                     sorted({f2i[int(r)] for r, t in typ.items()
                             if isinstance(t, str) and gpat.match(t)
                             and int(r) in f2i}), dtype=np.int32)
+                self._spike_cache = c
+            return c["apl"], c["gset"], None
+        if self.mode in ("banc", "mcns"):
+            # whole-CNS APL + graded early vision from roles (build_rf/patch)
+            if "apl" not in c:
+                r = np.load(f"{self.path}/{'banc_roles.npz' if self.mode == 'banc' else 'male_roles.npz'}",
+                            allow_pickle=True)
+                c["apl"] = np.asarray(r["APL"], dtype=np.int32)
+                c["gset"] = np.asarray(r["GSET"], dtype=np.int32)
                 self._spike_cache = c
             return c["apl"], c["gset"], None
         # mb: 2 spiking APL nodes from real KC<->APL weights (test_lif v2).
@@ -828,12 +847,22 @@ class FlyBrainAPI:
                 _of = f"{self.path}/odor_glom.npz"
                 _door = f"{self.path}/door_odors.npz"
                 _taste = f"{self.path}/taste_grns.npz"
-                if _os3.path.exists(_taste) and odor in ("sugar", "bitter", "water", "ir94e"):
-                    if self.mode != "full":
-                        raise ValueError("GRN tastes require mode='full'")
-                    _tt = np.load(_taste)
-                    sel = _tt[odor+"_idx"]
-                    idx.append(sel); val.append(np.full(len(sel), 2.0, np.float32))
+                if odor in ("sugar", "bitter", "water", "ir94e"):
+                    if self.mode in ("banc", "mcns"):
+                        # EXPERIMENTAL: single GRN pool, no quality split (BANC/MCNS
+                        # lack Gr receptor annotation); all four names drive it.
+                        grn = getattr(self, "GRN", np.zeros(0, np.int32))
+                        if not len(grn):
+                            raise ValueError("no GRN pool in this mode")
+                        idx.append(grn); val.append(np.full(len(grn), 2.0, np.float32))
+                    elif self.mode != "full":
+                        raise ValueError("GRN tastes require mode='full'/'banc'/'mcns'")
+                    else:
+                        if not _os3.path.exists(_taste):
+                            raise ValueError("taste tables missing")
+                        _tt = np.load(_taste)
+                        sel = _tt[odor+"_idx"]
+                        idx.append(sel); val.append(np.full(len(sel), 2.0, np.float32))
                 elif _os3.path.exists(_door) and odor in (
                         "geosmin", "co2", "hexanone3", "methyl_salicylate", "butanedione", "ethyl_hexanoate"):
                     if self.mode not in ("full", "banc", "mcns"):
@@ -944,6 +973,14 @@ class FlyBrainAPI:
         Phase signal goes to the CORRECT neurons: M (s-LNv/l-LNv, morning) vs
         E (LNd/DN1, evening), bipolar +-amp. Sleep gate C switches from light
         to clock phase (night = high P2/TIM)."""
+        from clock import TTFL
+        if self.mode in ("banc", "mcns"):
+            self._clock_M = np.asarray(getattr(self, "CLOCK_M", []), dtype=np.int32)
+            self._clock_E = np.asarray(getattr(self, "CLOCK_E", []), dtype=np.int32)
+            self._clock = TTFL()
+            self._clock_amp = float(amp)
+            self._clock_state = {"morning": 0.5, "night_frac": 0.5, "night": False}
+            return {"M": len(self._clock_M), "E": len(self._clock_E), "amp": amp}
         import pandas as pd, re
         from clock import TTFL
         comp = pd.read_csv(f"{self.path}/Completeness_783.csv")

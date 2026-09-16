@@ -113,6 +113,17 @@ Weights: C++ uses raw float32 `.wbin` (save/load_wbin), not Python `.npz`.
 `buridan`/`habituate`/`detour` train inline when `--w-in` is missing.
 `heatbox` writes the punishment schedule for `heatbox_ctl` (yoked/unpaired).
 
+## Spike, clock, taste in banc/mcns
+
+- Spike: own APL + graded early-vision sets per dataset (no more FAFB graft).
+  banc healthy out of the box (odor ~73Hz max); mcns defaults SFA ainc=16
+  (calibrated MBON<70Hz, KC 16-49% — denser than Shiu MB-only, open work).
+- Clock: TTFL pools per mode (s/l-LNv morning, LNd/DN1 evening); spaced
+  batteries run fully clock-gated in every CNS mode.
+- Taste: single GRN pool per mode (BANC 1423, MCNS 1428) — no quality split,
+  both datasets lack Gr receptor annotation. All four names drive it
+  (labeled EXPERIMENTAL); sugar bit-parity Python=C++ (DAN_pam 0.0029).
+
 ## Fast protocol tests (mb, seconds)
 
 ```bash

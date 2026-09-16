@@ -61,6 +61,14 @@ for mode, circ, roles in (("banc", "banc_circuit.npz", "banc_roles.npz"),
     orn = np.asarray(r["ORN"]).astype(np.int32)
     w(f"{mode}_ORN_L", orn[side[orn] == ("left" if mode == "banc" else "L")])
     w(f"{mode}_ORN_R", orn[side[orn] == ("right" if mode == "banc" else "R")])
+    for ck in ("CLOCK_M", "CLOCK_E", "GRN"):
+        if ck in r:
+            w(f"{mode}_{ck.lower()}", np.asarray(r[ck]).astype(np.int32))
+    if "GRN" in r:
+        grn = np.asarray(r["GRN"]).astype(np.int32)
+        for t in ("sugar", "bitter", "water", "ir94e"):
+            # single GRN pool, no quality split (see API docs)
+            w(f"{mode}_taste_{t}", grn)
     if "R" in r:
         rr = np.asarray(r["R"]).astype(np.int32)
         w(f"{mode}_R", rr)
