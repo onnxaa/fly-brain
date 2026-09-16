@@ -246,6 +246,8 @@ class FlyBrainAPI:
             _rm = set(int(x) for x in self.Rret)
             self.R_LU = np.array([x for x in self.R_L if int(x) not in _rm], dtype=np.int32)
             self.R_RU = np.array([x for x in self.R_R if int(x) not in _rm], dtype=np.int32)
+            self.L1 = np.asarray(r["L1"], dtype=np.int32) if "L1" in r else np.zeros(0, np.int32)
+            self.L2 = np.asarray(r["L2"], dtype=np.int32) if "L2" in r else np.zeros(0, np.int32)
             self.MOTOR = np.asarray(r["MOTOR"], dtype=np.int32)
             self.MOTOR_leg_L = np.asarray(r["leg_L"], dtype=np.int32)
             self.MOTOR_leg_R = np.asarray(r["leg_R"], dtype=np.int32)
@@ -841,7 +843,7 @@ class FlyBrainAPI:
         return oi[keep], ov[keep]
 
     def encode(self, image=None, odor=None, mech=None, alpn=None, odor_left=None, odor_right=None,
-               mech_left=None, mech_right=None):
+               mech_left=None, mech_right=None, vpol="lum"):
         """Returns (idx, val, info): info has 'motion' when motion was computed."""
         info = {}
         idx, val = [], []
@@ -922,6 +924,11 @@ class FlyBrainAPI:
         if image is not None:
             if not len(getattr(self, "R", [])):
                 raise ValueError("images require R photoreceptors (full/banc/mcns, not mb)")
+            if vpol not in ("lum", "on", "off"):
+                raise ValueError("vpol must be 'lum', 'on' or 'off'")
+            # vpol: lum=legacy raw drive; on/off=L1-increment/L2-decrement
+            # labeled lines (L-only, no R cross-talk), bg=0.5.
+            _lonly = self.mode == "banc" and vpol in ("on", "off")
             if self.mode == "mcns":
                 # homology-anchored RF where available (BANC malecns_match),
                 # eye-mean for the rest (no fabrication).
@@ -933,26 +940,33 @@ class FlyBrainAPI:
                 lv = float(g[:, :Ww // 2].mean()); rv = float(g[:, Ww // 2:].mean())
                 idx.append(self.R_LU); val.append(np.full(len(self.R_LU), lv * 2.0, np.float32))
                 idx.append(self.R_RU); val.append(np.full(len(self.R_RU), rv * 2.0, np.float32))
+                if vpol in ("on", "off"):
+                    _d = np.clip(g - 0.5, 0, 1).mean() if vpol == "on" else np.clip(0.5 - g, 0, 1).mean()
+                    _pool = self.L1 if vpol == "on" else self.L2
+                    idx.append(_pool); val.append(np.full(len(_pool), float(_d) * 2.0, np.float32))
                 mot, _ = self._motion_energies(self._small16(g))
                 info["motion"] = mot
-            if self.mode not in ("full", "banc", "mcns"):
-                raise ValueError("images require a CNS mode with R photoreceptors")
-            if self.mode in ("full", "banc"):
+            elif self.mode in ("full", "banc"):
                 # Phototransduction only: each R cell samples the image at its own
                 # receptive field (bilinear + Gaussian RF). No grid, no bins.
                 g = self._gray(image)
-                idx.append(self.R)
-                val.append((self._sample_R(g) * 2.0).astype(np.float32))
+                if not _lonly:
+                    idx.append(self.R)
+                    val.append((self._sample_R(g) * 2.0).astype(np.float32))
                 if self.mode == "banc" and len(getattr(self, "L1", [])):
                     # luminance proxy (R1-6 absent in BANC v888): drive their L1/L2
                     # targets at column RF. Labeled proxy, not photoreceptors.
+                    g1 = np.clip(g - 0.5, 0, 1) if vpol == "on" else (g if vpol == "lum" else np.zeros_like(g))
+                    g2 = np.clip(0.5 - g, 0, 1) if vpol == "off" else (g if vpol == "lum" else np.zeros_like(g))
                     idx.append(self.L1)
-                    val.append((self._sample_at(self.L1_cx, self.L1_cy, g) * 2.0).astype(np.float32))
+                    val.append((self._sample_at(self.L1_cx, self.L1_cy, g1) * 2.0).astype(np.float32))
                     idx.append(self.L2)
-                    val.append((self._sample_at(self.L2_cx, self.L2_cy, g) * 2.0).astype(np.float32))
+                    val.append((self._sample_at(self.L2_cx, self.L2_cy, g2) * 2.0).astype(np.float32))
                 # Reichardt motion: readout ONLY (info), never injected into ME - no mapping data
                 mot, _ = self._motion_energies(self._small16(g))
                 info["motion"] = mot
+            else:
+                raise ValueError("images require a CNS mode with R photoreceptors")
         if not idx:
             Iv, Vv = np.zeros(0, np.int32), np.zeros(0, np.float32)
         else:
@@ -1212,7 +1226,7 @@ class FlyBrainAPI:
         return self._base
 
     def step(self, image=None, odor=None, mech=None, alpn=None, hops=None, pure=None, thr=0.0,
-             odor_left=None, odor_right=None, mech_left=None, mech_right=None):
+             odor_left=None, odor_right=None, mech_left=None, mech_right=None, vpol="lum"):
         # NOTE timescales: one step = 1 behavioral trial (seconds-minutes). The clock ticks
         # ONLY via tick_clock() - otherwise a 10Hz mob would spin a day in 2s.
         # hops=None -> self._hops (set_hops); mb default 1, full default 2.
@@ -1222,7 +1236,7 @@ class FlyBrainAPI:
             hops = int(hops)
         idx, val, info = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
                                      odor_left=odor_left, odor_right=odor_right,
-                                     mech_left=mech_left, mech_right=mech_right)
+                                     mech_left=mech_left, mech_right=mech_right, vpol=vpol)
         _st = getattr(self, "_std", None)
         if _st is not None and _st["alpha"] > 0:
             idx, val = self._apply_std(idx, val, _st["alpha"], _st["tau"])
@@ -1779,7 +1793,7 @@ class FlyBrainAPI:
         return path
 
     def train(self, image=None, odor=None, mech=None, alpn=None, reward=0.0, punish=0.0, pure=True, thr=0.0,
-              odor_left=None, odor_right=None, mech_left=None, mech_right=None, gated=True, hops=None):
+              odor_left=None, odor_right=None, mech_left=None, mech_right=None, gated=True, hops=None, vpol="lum"):
         """reward>0 (PAM: weakens avoid) / punish>0 (PPL1: weakens approach). Returns post-learning step().
         gated=True: memory-protecting DAN - depression weighted by KC uniqueness against
         registered codes (x_remember): shared KC spared (x1.0), unique x0.85.
@@ -1791,7 +1805,7 @@ class FlyBrainAPI:
             hops = int(hops)
         idx, val, _ = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
                                   odor_left=odor_left, odor_right=odor_right,
-                                  mech_left=mech_left, mech_right=mech_right)
+                                  mech_left=mech_left, mech_right=mech_right, vpol=vpol)
         if str(getattr(self, "_act", "relu")) == "spike":
             h = self._forward_spike(idx, val)
             kcs = h[self.KC]
@@ -1852,4 +1866,4 @@ class FlyBrainAPI:
         self.wM[self.km_mask] = (self.wM[self.km_mask]*sc[self.km_mi]).astype(np.float32)
         return self.step(image=image, odor=odor, mech=mech, alpn=alpn,
                          odor_left=odor_left, odor_right=odor_right,
-                         mech_left=mech_left, mech_right=mech_right, hops=hops)
+                         mech_left=mech_left, mech_right=mech_right, hops=hops, vpol=vpol)

@@ -111,11 +111,29 @@ fly.train(odor="ethyl_hexanoate", reward=1.0)
 fly.save_weights("w.npz")
 ```
 
+```python
+# female whole-CNS (BANC) and male whole-CNS (MCNS): intact brain->VNC
+banc = FlyBrainAPI(mode="banc")   # 150k neurons / 11M edges
+male = FlyBrainAPI(mode="mcns")   # 165k neurons / 25.6M edges
+o = male.step(odor="geosmin", image=img, mech=v)
+o["BANC_leg_L"], o["BANC_wing"]   # intact motor readouts, one animal
+
+# deep vision: active scaling keeps Exc chains alive (default static)
+male.set_scaling("active"); male.set_hops(4)
+o = male.step(image=img)          # DN/legs respond, lateralized
+
+# spikes: own APL/graded sets per dataset (mcns pre-calibrated SFA)
+male.set_activation("spike"); o = male.step(odor="geosmin")  # Hz dict
+```
+
 Inputs combine freely: `odor` (DoOR name / 'A'/'B' / vector), `odor_left/right`,
-`image` (full only), `mech`, `mech_left/right`, `alpn`, `dan_rew/dan_pun`.
-Outputs: `MB_pref/app/avo`, `MBON(96)`, `KC_active`, modality means,
+`image` (full/banc retinotopic, mcns homology+eye-split), `mech`,
+`mech_left/right`, `alpn` (full only), `dan_rew/dan_pun`, tastes
+`sugar/bitter/water/ir94e` (full split; banc/mcns single GRN pool).
+Outputs: `MB_pref/app/avo`, `MBON`, `KC_active`, modality means,
 `ALPN_L/R`, `ORN_L/R`, `MECH_L/R`, `turn_olf`, `DN_L/R`, `turn`, `motor_pref`,
-`EFFERENT(1481)`, `EI_sum`, sleep/clock state.
+`EFFERENT(1481)` (full), `BANC_motor/leg_L/R/wing/neck` (banc/mcns),
+`EI_sum`, sleep/clock state.
 
 ## Validation (measured)
 

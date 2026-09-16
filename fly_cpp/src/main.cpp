@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
     std::string mech_bin;
     bool use_vnc = false;
     int steps = -1, test_n = -1, n_switch = -1;
-    std::string scaling, img_bin; int imgH = 0, imgW = 0;
+    std::string scaling, img_bin; int imgH = 0, imgW = 0, vpol = 0;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto need = [&](std::string& dst) { dst = argv[++i]; };
@@ -54,6 +54,7 @@ int main(int argc, char** argv) {
         else if (a == "--img-bin") need(img_bin);
         else if (a == "--img-h") imgH = std::stoi(argv[++i]);
         else if (a == "--img-w") imgW = std::stoi(argv[++i]);
+        else if (a == "--vpol") vpol = std::stoi(argv[++i]);
         else if (a[0] != '-') cmd = a;
     }
     if (cmd.empty()) { usage(); return 1; }
@@ -120,6 +121,7 @@ int main(int argc, char** argv) {
         s.has_image = true;
         s.image = fly::load_f32(img_bin, n);
         s.imgH = imgH > 0 ? imgH : 64; s.imgW = imgW > 0 ? imgW : 64;
+        s.vpol = vpol;
     }
     if (cmd == "step") {
         fly::Out o = b.step(s, hops, thr);

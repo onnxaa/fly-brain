@@ -22,6 +22,7 @@ struct Stim {
     std::vector<float> mech_left;  bool has_mech_left = false;
     std::vector<float> mech_right; bool has_mech_right = false;
     std::vector<float> image; int imgH = 0, imgW = 0; bool has_image = false;
+    int vpol = 0; // 0=lum legacy, 1=on (L1 increments), 2=off (L2 decrements)
 };
 
 struct Out {

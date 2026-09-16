@@ -585,8 +585,10 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
     if (s.has_image) {
         if (R.empty())
             throw std::runtime_error("images require R photoreceptors (not mb)");
+        if (s.vpol < 0 || s.vpol > 2) throw std::runtime_error("vpol must be 0/1/2 (lum/on/off)");
         std::vector<float> g = gray(s.image, s.imgH, s.imgW);
-        if (!R_cx.empty() && R_cx.size() == R.size()) {
+        bool lonly = (mode == "banc" && s.vpol != 0);
+        if (!R_cx.empty() && R_cx.size() == R.size() && !lonly) {
             std::vector<float> rv = sample_R(g, s.imgH, s.imgW);
             for (size_t i = 0; i < R.size(); i++) { idx.push_back(R[i]); val.push_back(rv[i]*2.0f); }
         } else if (!Rret.empty() && Rret_cx.size() == Rret.size()) {
@@ -602,8 +604,9 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
             lv /= (s.imgH * (s.imgW / 2)); rv2 /= (s.imgH * (s.imgW - s.imgW / 2));
             for (auto id : R_LU) { idx.push_back(id); val.push_back((float)lv * 2.0f); }
             for (auto id : R_RU) { idx.push_back(id); val.push_back((float)rv2 * 2.0f); }
-        } else if (!R_L.empty() && !R_R.empty()) {
-            // honest eye split (no per-neuron RF): mean halves -> R_L/R_R
+        } else if (!R_L.empty() && !R_R.empty() && R_cx.empty() && Rret.empty()) {
+            // honest eye split, only when no RF map exists at all (else the
+            // extra R drive would inhibit the L prosthesis via HisCl synapses)
             double lv = 0, rv2 = 0;
             for (int y = 0; y < s.imgH; y++)
                 for (int x = 0; x < s.imgW; x++) {
@@ -613,15 +616,31 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
             lv /= (s.imgH * (s.imgW / 2)); rv2 /= (s.imgH * (s.imgW - s.imgW / 2));
             for (auto id : R_L) { idx.push_back(id); val.push_back((float)lv * 2.0f); }
             for (auto id : R_R) { idx.push_back(id); val.push_back((float)rv2 * 2.0f); }
-        } else throw std::runtime_error("images: no R_cx map and no R_L/R split");
+        } else if (!lonly) throw std::runtime_error("images: no R_cx map and no R_L/R split");
+        // vpol: 0=lum raw to both (legacy), 1=on (L1 increments),
+        // 2=off (L2 decrements), bg=0.5
+        std::vector<float> g1 = g, g2 = g;
+        if (s.vpol == 1) {
+            for (auto& v : g1) v = v > 0.5f ? v - 0.5f : 0.0f;
+            std::fill(g2.begin(), g2.end(), 0.0f);
+        } else if (s.vpol == 2) {
+            std::fill(g1.begin(), g1.end(), 0.0f);
+            for (auto& v : g2) v = v < 0.5f ? 0.5f - v : 0.0f;
+        }
         if (!L1v.empty() && L1cx.size() == L1v.size()) {
             // luminance proxy (R1-6 absent in BANC): L1/L2 at column RF
-            std::vector<float> l1 = sample_at(g, s.imgH, s.imgW, L1cx, L1cy);
+            std::vector<float> l1 = sample_at(g1, s.imgH, s.imgW, L1cx, L1cy);
             for (size_t i = 0; i < L1v.size(); i++) { idx.push_back(L1v[i]); val.push_back(l1[i] * 2.0f); }
+        } else if (s.vpol == 1 && !L1v.empty()) {
+            double m = 0; for (auto v : g1) m += v; m /= g1.size();
+            for (auto id : L1v) { idx.push_back(id); val.push_back((float)m * 2.0f); }
         }
         if (!L2v.empty() && L2cx.size() == L2v.size()) {
-            std::vector<float> l2 = sample_at(g, s.imgH, s.imgW, L2cx, L2cy);
+            std::vector<float> l2 = sample_at(g2, s.imgH, s.imgW, L2cx, L2cy);
             for (size_t i = 0; i < L2v.size(); i++) { idx.push_back(L2v[i]); val.push_back(l2[i] * 2.0f); }
+        } else if (s.vpol == 2 && !L2v.empty()) {
+            double m = 0; for (auto v : g2) m += v; m /= g2.size();
+            for (auto id : L2v) { idx.push_back(id); val.push_back((float)m * 2.0f); }
         }
         auto sm = small16(g, s.imgH, s.imgW);
         auto pr = motion_energies(sm);
