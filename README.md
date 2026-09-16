@@ -133,7 +133,10 @@ Inputs combine freely: `odor` (DoOR name / 'A'/'B' / vector), `odor_left/right`,
 Outputs: `MB_pref/app/avo`, `MBON`, `KC_active`, modality means,
 `ALPN_L/R`, `ORN_L/R`, `MECH_L/R`, `turn_olf`, `DN_L/R`, `turn`, `motor_pref`,
 `EFFERENT(1481)` (full), `BANC_motor/leg_L/R/wing/neck` (banc/mcns),
-`EI_sum`, sleep/clock state.
+`EI_sum`, sleep/clock state. Vision polarity `vpol`: `lum` (default, raw
+drive incl. real R7/R8->L histamine inhibition), `on`/`off` (clean labeled
+lines: L1 increments / L2 decrements only, bg=0.5 — R cross-talk deliberately
+excluded, scales are incommensurate; C++ `--vpol 0/1/2`, bit-parity).
 
 ## Validation (measured)
 
