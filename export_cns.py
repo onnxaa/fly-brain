@@ -92,6 +92,10 @@ for mode, circ, roles in (("banc", "banc_circuit.npz", "banc_roles.npz"),
     for odor in ODORS:
         w(f"{mode}_door_{odor}_idx", dd[odor + "_idx"].astype(np.int32))
         w(f"{mode}_door_{odor}_val", dd[odor + "_val"].astype(np.float32))
+    if "APL" in r:
+        w(f"{mode}_spike_apl", np.asarray(r["APL"]).astype(np.int32))
+    if "GSET" in r:
+        w(f"{mode}_spike_gset", np.asarray(r["GSET"]).astype(np.int32))
     man[mode] = {"N": int(d["N"][0]), "E": int(len(pre)), "sorted_by_post": True}
     del d, r, dd, pre, post, sw, o
     print(f"{mode} OK", flush=True)

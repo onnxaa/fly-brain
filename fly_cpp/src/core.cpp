@@ -123,6 +123,8 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         ref_in.assign(N, 0.0f);
         for (int64_t e = 0; e < E; e++) ref_in[post[(size_t)e]] += wM[(size_t)e];
         spike_ainc = 4.0f; spike_adapt = 0.2f; spike_burn = 50;
+        // SFA calibration mirrors Python: dense male MB needs stronger adaptation
+        if (mode == "mcns") spike_ainc = 16.0f;
         build_km();
     }
     fan = LF(p + "_fan");
@@ -157,9 +159,10 @@ void FlyBrain::load(const std::string& m, const std::string& path) {
         taste_idx["ir94e"] = L32(tp + "_ir94e");
     } catch (...) {}
     try { odorA = L32("mb_odorA"); odorB = L32("mb_odorB"); } catch (...) {}
-    // spike caches
+    // spike caches (per-mode APL + graded sets; FAFB files are wrong neurons elsewhere)
     try {
-        spike_apl = L32("spike_apl"); spike_gset = L32("spike_gset");
+        std::string sp = (mode == "mb" || mode == "full") ? "spike" : p + "_spike";
+        spike_apl = L32(sp + "_apl"); spike_gset = L32(sp + "_gset");
         if (mode == "mb") {
             sp_k2a_pre = L32("spike_k2a_pre"); sp_k2a_w = LF("spike_k2a_w");
             sp_k2a_apl = L32("spike_k2a_apl"); sp_a2k_post = L32("spike_a2k_post");

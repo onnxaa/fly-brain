@@ -135,7 +135,10 @@ Weights: C++ uses raw float32 `.wbin` (save/load_wbin), not Python `.npz`.
 
 ## Spike, clock, taste in banc/mcns
 
-- Spike: own APL + graded early-vision sets per dataset (no more FAFB graft).
+- Spike: own APL + graded early-vision sets per dataset (no more FAFB graft),
+  exported as `<mode>_spike_apl/gset`, loaded per mode in C++ too. mcns SFA
+  calibration mirrored (ainc=16): geosmin MBON ~4 Hz, KC 15% (was 521 Hz/100%).
+  Spike uses Poisson drive — behavior-class parity by design, not bit-exact.
   banc healthy out of the box (odor ~73Hz max); mcns defaults SFA ainc=16
   (calibrated MBON<70Hz, KC 16-49% — denser than Shiu MB-only, open work).
 - Clock: TTFL pools per mode (s/l-LNv morning, LNd/DN1 evening); spaced
