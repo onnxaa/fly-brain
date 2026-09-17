@@ -1247,7 +1247,7 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
     return step(s, hh, thr);
 }
 
-void FlyBrain::sleep(int episodes, float rate) {
+void FlyBrain::sleep(int episodes, float rate, float replay) {
     // fused wash + CSR write-through (was: wash passes + full CSR rebuild)
     // tagged KM edges (learned since last sleep) wash at 1/10 rate
     // (synaptic tagging/capture); tags clear after sleep.
@@ -1257,6 +1257,16 @@ void FlyBrain::sleep(int episodes, float rate) {
         if (km_tag[j]) tagged.push_back(km_e[j]);
     std::vector<float> snap(tagged.size());
     for (size_t i = 0; i < tagged.size(); i++) snap[i] = wM[(size_t)tagged[i]];
+    if (replay > 0 && !tagged.empty()) {
+        // consolidation BEFORE wash: deepen tagged traces along learned dir
+        for (size_t i = 0; i < tagged.size(); i++) {
+            size_t ee = (size_t)tagged[i];
+            float nw = wM[ee] + replay * (wM[ee] - wM0[ee]);
+            if (nw < 0.05f) nw = 0.05f; if (nw > 650.0f) nw = 650.0f;
+            wM[ee] = nw;
+            csr_update_edge((int64_t)ee);
+        }
+    }
     for(int k=0;k<episodes;k++) {
         int64_t n = (int64_t)wM.size();
         #pragma omp parallel for schedule(static) if(n>1000000)

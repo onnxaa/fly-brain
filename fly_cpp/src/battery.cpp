@@ -787,6 +787,35 @@ void test_learn3f(const std::string& data, const std::string& mode) {
         check("tag", pre != 0.0f && post / pre > 0.9f,
               std::to_string(pre) + " -> " + std::to_string(post));
     }
+    {
+        auto rep = [&](float rp) {
+            FlyBrain b(mode, data); b.enable_scaling();
+            for (int i = 0; i < 3; i++) b.train(mkodor("A"), 1.0f, 0.0f);
+            float pre = b.step(mkodor("A")).MB_pref;
+            b.sleep(5, 0.1f, rp);
+            return std::make_pair(pre, b.step(mkodor("A")).MB_pref);
+        };
+        auto r0 = rep(0.0f), r5 = rep(0.5f);
+        check("replay", r5.second / r5.first > r0.second / r0.first && r5.second / r5.first > 1.0f,
+              std::to_string(r0.second / r0.first) + " vs " + std::to_string(r5.second / r5.first));
+    }
+    {
+        // R-STDP in-loop gating: no US -> silent, US -> plastic (mirrors .py)
+        auto dw3 = [&](float rw) {
+            FlyBrain b(mode, data); b.enable_scaling();
+            b.set_activation("spike");
+            std::vector<float> w0 = b.wM;
+            Stim s = mkodor("A");
+            if (rw > 0) s.dan_rew = rw;
+            b.train(s, rw, 0.0f, true, -1, 0.0f, true);
+            double d = 0;
+            for (size_t i = 0; i < w0.size(); i++) d += std::fabs(b.wM[i] - w0[i]);
+            return d;
+        };
+        double d0 = dw3(0.0f), d1 = dw3(1.0f);
+        check("rstdp", d0 == 0.0 && d1 > 0,
+              std::to_string(d0) + " vs " + std::to_string(d1));
+    }
     std::printf(fails ? "FAILURES: %d\n" : "ALL PASS\n", fails);
 }
 

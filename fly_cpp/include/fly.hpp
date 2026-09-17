@@ -251,7 +251,7 @@ public:
     bool dan_ref_done = false;
     // synaptic tag: KM edges learned since last sleep wash at 1/10 rate
     std::vector<char> km_tag;
-    void sleep(int episodes = 1, float rate = 0.02f);
+    void sleep(int episodes = 1, float rate = 0.02f, float replay = 0.0f);
     void save_wbin(const std::string& path);
     void load_wbin(const std::string& path);
 

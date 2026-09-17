@@ -120,6 +120,17 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
         tr_pre.assign((size_t)nN, 0.0);
         tr_post.assign((size_t)nN, 0.0);
     }
+    // R-STDP (Florian-like): DA concentration = slow EMA of DAN firing;
+    // gates all in-loop STDP. Refs in Hz/neuron (mb spike measured:
+    // PAM base 0/US 107, PPL base 33/US 118). No US -> silent.
+    std::unordered_set<int> danA, danP;
+    if (plastic) {
+        for (auto id : dan_pam) if (id >= 0 && id < nN) danA.insert((int)id);
+        for (auto id : dan_ppl) if (id >= 0 && id < nN) danP.insert((int)id);
+    }
+    double da_r = 0.0, da_p = 0.0;
+    const double da_k = 1.0 - std::exp(-DT / 100.0);
+    double da_g = 0.0;
     bool carry = (state_leak > 0 && spk_nN == nN &&
                   (int)spk_v.size() == nN);
     std::vector<double> v(nN, V0), vth(nN, VTH), gg(nN, 0.0), adapt(nN, 0.0);
@@ -293,14 +304,31 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
             adapt[(size_t)s] += A_INC; refr[(size_t)s] = 2;
             nsp[(size_t)s]++;
         }
+        if (plastic) {
+            if (!danA.empty()) {
+                int c = 0;
+                for (int s : sp) if (danA.count(s)) c++;
+                da_r += ((double)c / (double)danA.size() - da_r) * da_k;
+            }
+            if (!danP.empty()) {
+                int c = 0;
+                for (int s : sp) if (danP.count(s)) c++;
+                da_p += ((double)c / (double)danP.size() - da_p) * da_k;
+            }
+            double gr = da_r / 0.107, gp = (da_p - 0.033) / 0.085;
+            if (gr < 0) gr = 0; if (gr > 2) gr = 2;
+            if (gp < 0) gp = 0; if (gp > 2) gp = 2;
+            da_g = gr > gp ? gr : gp;
+        }
         if (plastic && t >= BURN) {
             for (size_t i = 0; i < tr_pre.size(); i++) {
                 tr_pre[i] *= DEC_T; tr_post[i] *= DEC_T;
             }
         }
         if (plastic && t >= BURN && !sp.empty()) {
-            // trace-STDP on wM magnitudes (true spikes only, burn excluded).
-            // Valence stays in the DAN slab in train() (no third factor yet).
+            // trace-STDP on wM magnitudes (true spikes only, burn excluded),
+            // weight writes scaled by DA gate (R-STDP). Traces track always
+            // (Python parity); no US -> da_g~0 -> writes are no-ops.
             #pragma omp parallel for schedule(static) if(sp.size() > 64)
             for (size_t si = 0; si < sp.size(); si++) {
                 int s = sp[si];
@@ -308,7 +336,7 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
                     int64_t o = cidx[(size_t)e];
                     if (o < 0 || o >= E) continue;
                     int32_t q = cpost[(size_t)e];
-                    double nw = (double)wM[(size_t)o] - stdp_Aminus * tr_post[(size_t)q];
+                    double nw = (double)wM[(size_t)o] - stdp_Aminus * da_g * tr_post[(size_t)q];
                     if (nw < 0.05) nw = 0.05; if (nw > 650.0) nw = 650.0;
                     wM[(size_t)o] = (float)nw;
                     cw[(size_t)e] = nw * sign[(size_t)o];
@@ -322,7 +350,7 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
                     int64_t o = cidx[(size_t)e];
                     if (o < 0 || o >= E) continue;
                     int32_t pp = (int32_t)pX[(size_t)o];
-                    double nw = (double)wM[(size_t)o] + stdp_Aplus * tr_pre[(size_t)pp];
+                    double nw = (double)wM[(size_t)o] + stdp_Aplus * da_g * tr_pre[(size_t)pp];
                     if (nw < 0.05) nw = 0.05; if (nw > 650.0) nw = 650.0;
                     wM[(size_t)o] = (float)nw;
                     cw[(size_t)e] = nw * sign[(size_t)o];

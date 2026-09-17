@@ -1040,11 +1040,20 @@ class FlyBrainAPI:
         AD_FLOOR = float(getattr(self, "_spike_adapt", 0.2))
         BURN = int(getattr(self, "_spike_burn", 50))
         # trace-STDP (opt-in): per-neuron pre/post traces, O(E) edge-mask
-        # updates piggybacking on the propagation scans. Unsupervised Hebbian;
-        # valence stays in the DAN slab in train() (no third factor yet).
+        # updates piggybacking on the propagation scans. R-STDP: DAN-gated
+        # (Florian-like); DA = slow EMA of DAN firing, gates all in-loop
+        # STDP. No US -> silent (was unsupervised Hebb - behavior change
+        # only when plastic=True with DAN present, i.e. train(stdp=True)).
         DEC_T = float(np.exp(-DT / float(stdp_tau)))
         tr_pre = np.zeros(nN, np.float64) if plastic else None
         tr_post = np.zeros(nN, np.float64) if plastic else None
+        _pam = np.asarray(getattr(self, "dan_pam", []), dtype=np.int32)
+        _pam = _pam[_pam < nN]
+        _ppl = np.asarray(getattr(self, "dan_ppl", []), dtype=np.int32)
+        _ppl = _ppl[_ppl < nN]
+        _da_r = _da_p = 0.0
+        _DA_TAU = 100.0
+        _da_k = 1.0 - float(np.exp(-DT / _DA_TAU))
         for t in range(T):
             gg *= DEC_G
             adapt *= DEC_A
@@ -1098,21 +1107,32 @@ class FlyBrainAPI:
                 nsp[sp] += 1
             if len(rel):
                 nrel[rel] += 1
+            if plastic:
+                # DA concentration tracks every ms (burn included: US drive
+                # present from t=0, EMA needs ~100ms to reflect it)
+                _sp = np.asarray(sp)
+                if len(_pam):
+                    _da_r += ((np.isin(_sp, _pam).sum() / max(len(_pam), 1)) - _da_r) * _da_k
+                if len(_ppl):
+                    _da_p += ((np.isin(_sp, _ppl).sum() / max(len(_ppl), 1)) - _da_p) * _da_k
+            _dg = max(min(_da_r / 0.107, 2.0),
+                      min((_da_p - 0.033) / 0.085, 2.0)) if plastic else 1.0
+            _dg = max(_dg, 0.0)
             if plastic and t >= BURN and len(sp):
                 # trace-STDP on self weights (magnitudes; signed local copy
-                # resynced below). Ext nodes (>=N) excluded.
+                # resynced below). Ext nodes (>=N) excluded. Gated by DA.
                 tr_pre *= DEC_T
                 tr_post *= DEC_T
                 sps = sp[sp < self.N]
-                if len(sps):
+                if len(sps) and _dg > 0:
                     _E = len(self.pre)
                     mp = np.isin(self.pre, sps)
                     if mp.any():
-                        _dw = float(stdp_Aminus) * tr_post[self.post[mp]]
+                        _dw = float(stdp_Aminus) * _dg * tr_post[self.post[mp]]
                         self.wM[mp] = np.clip(self.wM[mp] - _dw, 0.05, 650.0).astype(np.float32)
                     mq = np.isin(self.post, sps)
                     if mq.any():
-                        _dw = float(stdp_Aplus) * tr_pre[self.pre[mq]]
+                        _dw = float(stdp_Aplus) * _dg * tr_pre[self.pre[mq]]
                         self.wM[mq] = np.clip(self.wM[mq] + _dw, 0.05, 650.0).astype(np.float32)
                     w[:_E] = (self.wM * self.sign).astype(np.float64)
                 tr_pre[sp] += 1.0
@@ -1853,15 +1873,23 @@ class FlyBrainAPI:
                 out[f"X_{_xn}_all"] = _resp.astype(np.float32)
         return out
 
-    def sleep(self, episodes=1, rate=0.02):
+    def sleep(self, episodes=1, rate=0.02, replay=0.0):
         """Sleep (synaptic homeostasis SHY, Tononi-Cirelli): proportional downscaling of
         magnitudes toward baseline (wM0) preserving relative differences; Dale signs
         untouched (we operate on |w|); energy setpoints track the new state - no
         upward compensation (renorm in train() does not undo sleep). rate is protocol (like 0.85).
         Tagged KC->MBON edges (learned since last sleep) wash at 1/10 rate
-        (synaptic tagging/capture, Frey & Morris 1997-like); tags clear after sleep."""
+        (synaptic tagging/capture, Frey & Morris 1997-like); tags clear after sleep.
+        replay>0 = consolidation BEFORE wash: tagged traces reactivated and
+        deepened along their learned direction (w += replay*(w-w0),
+        hippocampal-replay-like); replay=0 (default) = SHY only, all
+        published sleep numbers unaffected."""
         _tag = sorted(getattr(self, "_km_tag", set()))
         _tag = [int(e) for e in _tag if 0 <= int(e) < len(self.wM)]
+        if replay > 0 and _tag:
+            _w = self.wM[_tag].astype(np.float64)
+            _w0 = self.wM0[_tag].astype(np.float64)
+            self.wM[_tag] = np.clip(_w + float(replay) * (_w - _w0), 0.05, 650.0).astype(np.float32)
         for _ in range(episodes):
             self.wM[:] = (self.wM - rate * (self.wM - self.wM0)).astype(np.float32)
             if _tag:
