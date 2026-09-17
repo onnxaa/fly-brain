@@ -27,6 +27,10 @@ MEASURED (SPY+QQQ daily 2018-2024, walk-forward, 2bp costs, mb mode):
   Consequence: DIRECTION rollout H2 HURTS (tune x1.38/+0.58 vs x2.21/+1.39).
   Vol-target sizing helps tune (+1.47 at 0.25) but FAILS holdout (+0.08 vs
   +0.37) = overfit to 2020 vol spike; REJECTED. Champion stays model-free.
+  CRYPTO (BTC daily 2024-26, 24/7): full x0.92/+0.03 vs BH x1.21; but SPLIT:
+  2025 (bear, BH x0.94): fly x1.08/+0.36. 2026 (bear, BH x0.86): fly x1.16/+0.67.
+  Same timer archetype (wins bears, loses sprints); uscale=3 adapts US to
+  3-4x vol. SHORT dies even in bears (x1.02, whipsaw). Hourly supplementary.
   Deterministic (identical across PYTHONHASHSEED).
   CROSS-BRAIN (2024 SPY, same protocol): mb x1.12/+1.49/DD4% vs MCNS
   (male whole-CNS, chained 3x85d) x1.12/Sharpe +1.4..+2.0/DD~4% vs BH x1.24
@@ -159,7 +163,7 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
                horizon=1, years=None, brain=None, mode="mb",
                days=None, sleep_big=0.0, replay_top=0, rollout_H=0, assoc=0.0,
                vol_target=0.0, hyst=None, trend_n=0, tstop=0.0,
-               tstop_vol=0.0):
+               tstop_vol=0.0, uscale=1.0):
     cl = load(sym)
     rets = cl[1:] / cl[:-1] - 1
     yrs = load_ohlc(sym)["yr"] if years else None
@@ -303,7 +307,7 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
         # outcome r realized; teach that association)
         ref = rets[t] if excess else 0.0
         ex = (pnl - _fc) - pos * ref  # NET of flip costs vs market/zero
-        s = min(abs(ex) / 0.02, 1.0)
+        s = min(abs(ex) / (0.02 * uscale), 1.0)
         # short positions: profit must reinforce SHORT (avoid side), so swap
         # valence - depress approach on short-profit, avoid on short-loss
         _sgn = -1.0 if pos < 0 else 1.0
@@ -341,7 +345,7 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
             _mktH = cl[t] / cl[t - horizon] - 1
             _fcH = sum(x[2] for x in hist[-horizon - 1:])
             _hex = (_hp * _mktH - _fcH) if not excess else ((_hp - 1.0) * _mktH - _fcH)
-            _ss = min(abs(_hex) / (0.02 * horizon), 1.0)
+            _ss = min(abs(_hex) / (0.02 * horizon * uscale), 1.0)
             if _hex > 0:
                 b.train(odor=_hf if _nomap else place(_hf, _live), reward=_ss, assoc=assoc)
             elif _hex < 0:
@@ -427,7 +431,7 @@ def run_ensemble(sym, configs, years=None, seed=1, verbose=True, wwin=60):
         for (b, cf, hist), feat in zip(brains, feats):
             ref = r
             ex = pnl - pos * ref
-            s = min(abs(ex) / 0.02, 1.0)
+            s = min(abs(ex) / (0.02 * uscale), 1.0)
             if ex > 0:
                 b.train(odor=place(feat, cf["_lv"]), reward=s)
             elif ex < 0:
