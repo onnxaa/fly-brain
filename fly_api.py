@@ -2349,8 +2349,8 @@ class FlyBrainAPI:
                        "pun": float(_uh[np.asarray(self.dan_ppl, dtype=np.int32)].mean())
                        if len(self.dan_ppl) else 0.0}
                 self._dan_ref = _dr
-            _s_r = float(np.clip(_dpam / (_dr["pam"] + 1e-9), 0.0, 1.0)) if _rw > 0 else 0.0
-            _s_p = float(np.clip(_dppl / (_dr["pun"] + 1e-9), 0.0, 1.0)) if _pu > 0 else 0.0
+            _s_r = float(np.clip(_dpam / (_dr["pam"] + 1e-9), 0.0, 2.0)) if _rw > 0 else 0.0
+            _s_p = float(np.clip(_dppl / (_dr["pun"] + 1e-9), 0.0, 2.0)) if _pu > 0 else 0.0
         if self.mode in ("full", "banc", "mcns") and reward != 0 and not (_spk and stdp):
             a = h if pure else h.mean(axis=1).astype(np.float32)
             for s in range(0, self.E, self.CH):
@@ -2384,6 +2384,12 @@ class FlyBrainAPI:
         _kidx = np.where(self.km_mask)[0]
         if getattr(self, "_km_tag", None) is None:
             self._km_tag = set()
+        # (Compartment etas from DAN convergence TRIED 2026-09 and REVERTED:
+        # DAN->MBON spans 5-13x (max 1081/med 83, no zeros) - real signal;
+        # sqrt and 4th-root scalings both valid in test_learn3f but WORSE
+        # for trading (tune -0.15, full -0.08, QQQ -0.04; only holdout +0.13:
+        # faster adaptation helps transitions but whipsaws stable regimes).
+        # Lesson stands: optimal plasticity speed is REGIME-DEPENDENT.)
         if reward > 0:
             sel = self.km_is_avoid & m[self.km_ki]
             if fkc is None:

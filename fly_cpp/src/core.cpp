@@ -1136,10 +1136,10 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
     }
     float s_r = 0.0f, s_p = 0.0f;
     if (reward != 0.0f && !dan_block && dan_ref_pam > 1e-9f) {
-        s_r = (float)(dpam / dan_ref_pam); if (s_r < 0) s_r = 0; if (s_r > 1) s_r = 1;
+        s_r = (float)(dpam / dan_ref_pam); if (s_r < 0) s_r = 0; if (s_r > 2) s_r = 2;
     }
     if (punish != 0.0f && !dan_block && dan_ref_pun > 1e-9f) {
-        s_p = (float)(dppl / dan_ref_pun); if (s_p < 0) s_p = 0; if (s_p > 1) s_p = 1;
+        s_p = (float)(dppl / dan_ref_pun); if (s_p < 0) s_p = 0; if (s_p > 2) s_p = 2;
     }
     if (spk && stdp) refresh_weights();
     size_t nKC = KC.size();
