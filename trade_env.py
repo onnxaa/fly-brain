@@ -7,14 +7,14 @@ MEASURED (SPY+QQQ daily 2018-2024, walk-forward, 2bp costs, mb mode):
   excess-return + relative rule -> x1.29/+0.46 SPY, x1.62/+0.63 QQQ.
   OHLC features -> x1.45/+0.62 (pattern-level changes move it; level
   changes wash out in the relative rule; rehearsal/sleep/sizing null).
-  CHAMPION (core-6 on live KC slots + H5 + leak 0.3):
-  FULL SAMPLE: SPY x2.55/+0.92/DD22% (BH x2.19/+0.68/DD52%),
-  QQQ x4.70/+1.27/DD32% (BH x3.19/+0.82/DD55%) - BEATEN both metrics both.
-  TUNE 2018-21: x2.18/+1.25 (BH x1.78). HOLDOUT 2022-24 (locked, fresh):
-  x1.09/+0.32 (BH x1.23); warm-start x1.16/+0.43 - positive Sharpe, trails
-  the bull-transition. More features HURT (11-dim x2.23 < 6-dim x2.55:
-  dimensionality curse - fewer codes, more trials per code). Costs 2bp
-  (5bp: x2.12, 10bp: x1.85). SHORT: suicide in secular bull - dropped.
+  CHAMPION (core-6 on live KC slots + H6 + leak 0.3 + net-of-cost):
+  FULL SAMPLE: SPY x2.78/+1.05/DD21% (BH x2.19/+0.68/DD52%),
+  QQQ x3.29/+1.02/DD32% (BH x3.19/+0.82/DD55%) - BEATEN both metrics both.
+  TUNE 2018-21: H6 x2.21/+1.39/DD17 (BH x1.78; H4 x2.33/+1.38 second).
+  HOLDOUT 2022-24 (locked, fresh): x1.12/+0.37 (BH x1.23); warm-start
+  x1.16/+0.43 - positive Sharpe, trails the bull-transition. NULLS: colonies dilute,
+  sleep/replay/gate/sizing move nothing (rel-rule fixed point), DD-aversion backfires;
+  SHORT suicide in secular bull. Costs 2bp (5bp: x2.12, 10bp: x1.85).
   Deterministic (identical across PYTHONHASHSEED).
   CROSS-BRAIN (2024 SPY, same protocol): mb x1.12/+1.49/DD4% vs MCNS
   (male whole-CNS, chained 3x85d) x1.12/Sharpe +1.4..+2.0/DD~4% vs BH x1.24
@@ -145,7 +145,7 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
                excess=False, rel_rule=False, ohlc=False, conf_k=0.0,
                short=False, sleep_every=0, size=False,
                horizon=1, years=None, brain=None, mode="mb",
-               days=None):
+               days=None, sleep_big=0.0, replay_top=0):
     cl = load(sym)
     rets = cl[1:] / cl[:-1] - 1
     yrs = load_ohlc(sym)["yr"] if years else None
@@ -160,7 +160,8 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
     eqs = []
     rets_fly = []
     prev_feat = None
-    hist = []  # (feat, signed-outcome) for rehearsal
+    hist = []  # (feat, pos, flipcost) for horizon teaching
+    _rbuf = []  # hippocampal replay buffer: (feat, reward, punish) strong only
     d = load_ohlc(sym) if ohlc else None
     _live = None
     _t1 = len(cl) - 1
@@ -197,8 +198,9 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
                 new_pos = 0
         else:
             new_pos = 1 if o["MB_app"] > o["MB_avo"] else 0
-        if abs(new_pos - pos) > 1e-9:
-            eq *= (1 - COST * abs(new_pos - pos))
+        _fc = COST * abs(new_pos - pos) if abs(new_pos - pos) > 1e-9 else 0.0
+        if _fc > 0:
+            eq *= (1 - _fc)
         pos = new_pos
         r = rets[t]  # close t -> close t+1
         pnl = pos * r
@@ -208,7 +210,7 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
         # online update on yesterday's outcome (causal: feat_{t} decided pos,
         # outcome r realized; teach that association)
         ref = rets[t] if excess else 0.0
-        ex = pnl - pos * ref  # vs market (excess) or vs zero
+        ex = (pnl - _fc) - pos * ref  # NET of flip costs vs market/zero
         s = min(abs(ex) / 0.02, 1.0)
         # short positions: profit must reinforce SHORT (avoid side), so swap
         # valence - depress approach on short-profit, avoid on short-loss
@@ -218,16 +220,35 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
         elif ex * _sgn < 0:
             b.train(odor=_fe, punish=s * punish_scale)
         prev_feat = feat
-        hist.append((feat.copy(), float(pos)))
-        _ = ex * _sgn  # (daily signed outcome already taught above)
+        hist.append((feat.copy(), float(pos), float(_fc)))
+        # sleep consolidation after BIG days only (not calendar): today's
+        # lesson is tag-protected, SHY washes old noise (uses sleep machinery)
+        if sleep_big > 0 and abs(ex) > sleep_big:
+            b.sleep(1)
+        # hippocampal-style replay: buffer strong outcomes, replay top few
+        # by |signal| every 20 days, then clear (oneirogenesis per cycle)
+        if replay_top > 0 and abs(ex) > 0.01:
+            _rbuf.append((feat.copy(),
+                          s if ex * _sgn > 0 else 0.0,
+                          s * punish_scale if ex * _sgn < 0 else 0.0))
+        if replay_top > 0 and t % 20 == 0 and _rbuf:
+            _rbuf.sort(key=lambda x: -(abs(x[1]) + abs(x[2])))
+            for _ff, _rr, _pp in _rbuf[:replay_top]:
+                _fm = _ff if _nomap else place(_ff, _live)
+                if _rr > 0:
+                    b.train(odor=_fm, reward=_rr)
+                elif _pp > 0:
+                    b.train(odor=_fm, punish=_pp)
+            _rbuf.clear()
         # multi-day holding-period teaching (delayed conditioning, causal:
         # P&L of the position held since t-H attributed to feat_{t-H}).
         # excess framing vs always-long benchmark: (pos-1)*mkt_H rewards
         # dodging down markets, punishes sitting out rallies.
         if horizon > 1 and len(hist) > horizon:
-            _hf, _hp = hist[-horizon - 1]
+            _hf, _hp, _ = hist[-horizon - 1]
             _mktH = cl[t] / cl[t - horizon] - 1
-            _hex = _hp * _mktH if not excess else (_hp - 1.0) * _mktH
+            _fcH = sum(x[2] for x in hist[-horizon - 1:])
+            _hex = (_hp * _mktH - _fcH) if not excess else ((_hp - 1.0) * _mktH - _fcH)
             _ss = min(abs(_hex) / (0.02 * horizon), 1.0)
             if _hex > 0:
                 b.train(odor=_hf if _nomap else place(_hf, _live), reward=_ss)
@@ -249,10 +270,11 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
             "brain": b}
 
 
-def run_ensemble(sym, configs, years=None, seed=1, verbose=True):
-    """Colony: several brains (different horizons/memory) vote; position =
-    mean vote in [0,1] (fractional, |dpos| costs). Each brain trains on its
-    own outcome share (same market outcome, own features/history)."""
+def run_ensemble(sym, configs, years=None, seed=1, verbose=True, wwin=60):
+    """Colony with PERFORMANCE-weighted vote: each member hypothetical P&L
+    (own vote x market) over trailing wwin days -> Sharpe -> softmax
+    weights. Good members lead, bad ignored (equal votes dilute to null).
+    Position in [0,1], |dpos| costs."""
     from fly_api import FlyBrainAPI as _FB
     cl = load(sym)
     rets = cl[1:] / cl[:-1] - 1
@@ -272,6 +294,7 @@ def run_ensemble(sym, configs, years=None, seed=1, verbose=True):
     eqs = []
     rets_fly = []
     pos_hist = []  # shared executed positions (causal attribution base)
+    hyp = [[] for _ in brains]  # per-member hypothetical daily P&L
     for t in _in:
         votes = []
         feats = []
@@ -286,7 +309,15 @@ def run_ensemble(sym, configs, years=None, seed=1, verbose=True):
             votes.append(1.0 if _pref > _thr else 0.0)
             hist.append(_pref)
             del hist[:-500]
-        new_pos = float(sum(votes) / len(votes))
+        _sh = []
+        for hh in hyp:
+            w = hh[-wwin:]
+            _sh.append(float(np.mean(w) / (np.std(w) + 1e-9)) if len(w) >= 20 else 0.0)
+        _mx = max(_sh)
+        _ew = [np.exp(min(max(s - _mx, -5.0), 5.0)) for s in _sh]
+        _sw = sum(_ew)
+        _w = [e / _sw for e in _ew]
+        new_pos = float(sum(v * x for v, x in zip(votes, _w)))
         eq *= (1 - COST * abs(new_pos - pos))
         pos = new_pos
         pos_hist.append(pos)
@@ -295,6 +326,10 @@ def run_ensemble(sym, configs, years=None, seed=1, verbose=True):
         eq *= (1 + pnl)
         eqs.append(eq)
         rets_fly.append(pnl)
+        for hh, v in zip(hyp, votes):
+            hh.append(v * r)
+            if len(hh) > 90:
+                del hh[:-90]
         # each brain: daily excess + own-horizon teaching on the SHARED
         # position outcome attributed to its OWN features/history
         for (b, cf, hist), feat in zip(brains, feats):
@@ -348,7 +383,7 @@ if __name__ == "__main__":
     # champion: CORE-6 momentum features mapped onto KC-feeding ALPN slots
     # (dead slots waste features - only 5/12 first slots reach KC) + excess
     # + relative rule + 5-day horizon teaching + leak 0.3 memory.
-    CH = dict(excess=True, rel_rule=True, horizon=5, leak=0.3, ohlc=False)
+    CH = dict(excess=True, rel_rule=True, horizon=6, leak=0.3, ohlc=False)
     for sym in (sys.argv[1:] or ["spy", "qqq"]):
         baselines(sym)
         run_market(sym, **CH)
