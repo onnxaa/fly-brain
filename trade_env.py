@@ -4,10 +4,14 @@ MEASURED (SPY+QQQ daily 2018-2024, walk-forward, 2bp costs, mb mode):
   base config -> learned helplessness (always FLAT, x0.97, hit <1%):
   noise dominates, punishment kills approach and nothing overcomes it.
   punish x0.5 -> x1.11 SPY / x1.10 QQQ, Sharpe +0.3.
-  excess-return + relative rule -> x1.29/+0.46 SPY, x1.62/+0.63 QQQ
-  (random x1.30/x1.89, buy-hold x2.19/x3.19). Profile: flat-to-up every
-  year (0.96-1.12x), sidesteps the bear year (yr4: fly x1.04 vs BH x0.85)
-  but never captures bull runs. Low-beta timer, not an alpha machine.
+  excess-return + relative rule -> x1.29/+0.46 SPY, x1.62/+0.63 QQQ.
+  OHLC features -> x1.45/+0.62 (pattern-level changes move it; level
+  changes wash out in the relative rule; rehearsal/sleep/sizing null).
+  CHAMPION (+5d horizon teaching + leak 0.3: learns trends not noise):
+  SPY x2.30/+0.90/DD30% (BH x2.19/+0.68/DD52% - BEATEN absolute+risk-adj),
+  QQQ x2.72/+0.88/DD39% (BH x3.19/+0.82/DD55% - better Sharpe, smaller DD,
+  trails the monster bull absolute). Costs 2bp (5bp: x2.12, 10bp: x1.85).
+  SHORT side: suicide in a secular bull (x0.73, DD46%) - dropped.
   Deterministic (identical across PYTHONHASHSEED).
 
 Setup (honest classical conditioning, no numeracy/gradient planning):
@@ -55,8 +59,38 @@ def features(cl, t):
                     dtype=np.float32)
 
 
+def load_ohlc(sym):
+    import csv as _csv
+    o, h, l, c, v = [], [], [], [], []
+    with open(f"mkt_{sym}_ohlc.csv") as f:
+        for row in _csv.DictReader(f):
+            o.append(float(row["open"])); h.append(float(row["high"]))
+            l.append(float(row["low"])); c.append(float(row["close"]))
+            v.append(float(row["volume"]))
+    return {k: np.array(x) for k, x in
+            (("o", o), ("h", h), ("l", l), ("c", c), ("v", v))}
+
+
+def features2(d, t):
+    """10-dim past-only features (adds range/volume/gap/streak to features)."""
+    c = d["c"][:t + 1]
+    base = features(d["c"], t)[:6]
+    h, l, o, v = d["h"][:t + 1], d["l"][:t + 1], d["o"][:t + 1], d["v"][:t + 1]
+    rng = ((h[-20:] - l[-20:]) / c[-20:]).mean() if len(c) >= 20 else 0.02
+    vm = v[-20:].mean() if len(v) >= 20 else 1.0
+    vz = np.log(v[-1] / vm) if vm > 0 and v[-1] > 0 else 0.0
+    gap = o[-1] / c[-2] - 1 if len(c) > 1 else 0.0
+    lr = np.diff(np.log(c[-21:])) if len(c) > 5 else np.array([0.0])
+    streak = float(np.sign(lr[-5:]).sum() / 5) if len(lr) >= 5 else 0.0
+    z = lambda x, s: float(np.clip(0.5 + x / s, 0.0, 1.0))
+    return np.concatenate([base, [z(rng - 0.02, 0.03), z(vz, 1.5),
+                                  z(gap, 0.02), streak * 0.5 + 0.5]]).astype(np.float32)
+
+
 def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
-               excess=False, rel_rule=False):
+               excess=False, rel_rule=False, ohlc=False, conf_k=0.0,
+               short=False, sleep_every=0, size=False,
+               horizon=1):
     cl = load(sym)
     rets = cl[1:] / cl[:-1] - 1
     b = FlyBrainAPI(mode="mb", path=".", seed=seed)
@@ -69,22 +103,33 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
     eqs = []
     rets_fly = []
     prev_feat = None
+    hist = []  # (feat, signed-outcome) for rehearsal
+    d = load_ohlc(sym) if ohlc else None
     for t in range(t0, len(cl) - 1):
-        feat = features(cl, t)
+        feat = features2(d, t) if ohlc else features(cl, t)
         o = b.step(odor=feat)
-        if rel_rule:
-            # trade relative preference (running median threshold) so mass
-            # depression cannot pin the fly flat forever
+        if rel_rule or conf_k > 0 or short:
+            # relative preference + confidence gate + optional SHORT side
+            # (engineered extension: strong avoidance = active short)
             _hist = getattr(b, "_pref_hist", [])
             _pref = o["MB_app"] - o["MB_avo"]
             _thr = float(np.median(_hist)) if len(_hist) >= 20 else 0.0
-            new_pos = 1 if _pref > _thr else 0
+            _sd = float(np.std(_hist)) if len(_hist) >= 20 else 1.0
             _hist.append(_pref)
             b._pref_hist = _hist[-500:]
+            if size and not short and conf_k == 0.0:
+                # fractional confidence sizing (no leverage, |dpos| costs)
+                new_pos = float(np.clip((_pref - _thr) / (2 * _sd + 1e-9), 0.0, 1.0))
+            elif short and _pref < _thr - conf_k * _sd:
+                new_pos = -1
+            elif _pref > _thr + conf_k * _sd:
+                new_pos = 1
+            else:
+                new_pos = 0
         else:
             new_pos = 1 if o["MB_app"] > o["MB_avo"] else 0
-        if new_pos != pos:
-            eq *= (1 - COST)
+        if abs(new_pos - pos) > 1e-9:
+            eq *= (1 - COST * abs(new_pos - pos))
         pos = new_pos
         r = rets[t]  # close t -> close t+1
         pnl = pos * r
@@ -96,11 +141,31 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
         ref = rets[t] if excess else 0.0
         ex = pnl - pos * ref  # vs market (excess) or vs zero
         s = min(abs(ex) / 0.02, 1.0)
-        if ex > 0:
+        # short positions: profit must reinforce SHORT (avoid side), so swap
+        # valence - depress approach on short-profit, avoid on short-loss
+        _sgn = -1.0 if pos < 0 else 1.0
+        if ex * _sgn > 0:
             b.train(odor=feat, reward=s)
-        elif ex < 0:
+        elif ex * _sgn < 0:
             b.train(odor=feat, punish=s * punish_scale)
         prev_feat = feat
+        hist.append((feat.copy(), float(pos)))
+        _ = ex * _sgn  # (daily signed outcome already taught above)
+        # multi-day holding-period teaching (delayed conditioning, causal:
+        # P&L of the position held since t-H attributed to feat_{t-H}).
+        # excess framing vs always-long benchmark: (pos-1)*mkt_H rewards
+        # dodging down markets, punishes sitting out rallies.
+        if horizon > 1 and len(hist) > horizon:
+            _hf, _hp = hist[-horizon - 1]
+            _mktH = cl[t] / cl[t - horizon] - 1
+            _hex = _hp * _mktH if not excess else (_hp - 1.0) * _mktH
+            _ss = min(abs(_hex) / (0.02 * horizon), 1.0)
+            if _hex > 0:
+                b.train(odor=_hf, reward=_ss)
+            elif _hex < 0:
+                b.train(odor=_hf, punish=_ss * punish_scale)
+        if sleep_every > 0 and (t - t0) % sleep_every == 0 and t > t0:
+            b.sleep(2)
     rets_fly = np.array(rets_fly)
     bh = cl[-1] / cl[t0]
     tot = eq
@@ -129,11 +194,9 @@ def baselines(sym):
 
 if __name__ == "__main__":
     import sys
+    # champion: OHLC features + excess + relative rule + 5-day horizon
+    # teaching + leak 0.3 memory. Ablated alternatives stay as kwargs.
+    CH = dict(ohlc=True, excess=True, rel_rule=True, horizon=5, leak=0.3)
     for sym in (sys.argv[1:] or ["spy", "qqq"]):
         baselines(sym)
-        for leak in (0.0, 0.3):
-            run_market(sym, leak=leak)
-        print("-- punish x0.5 --", flush=True)
-        run_market(sym, punish_scale=0.5)
-        print("-- excess + rel --", flush=True)
-        run_market(sym, excess=True, rel_rule=True)
+        run_market(sym, **CH)
