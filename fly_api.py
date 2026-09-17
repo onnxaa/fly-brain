@@ -2315,7 +2315,7 @@ class FlyBrainAPI:
 
     def train(self, image=None, odor=None, mech=None, alpn=None, reward=0.0, punish=0.0, pure=True, thr=0.0,
               odor_left=None, odor_right=None, mech_left=None, mech_right=None, gated=True, hops=None, vpol="lum",
-              stdp=False, dan_block=False):
+              stdp=False, dan_block=False, assoc=0.0):
         """THIRD-FACTOR (DAN-gated) KC->MBON plasticity on real FlyWire synapses.
         reward>0 drives PAM / punish>0 drives PPL1 (dan_rew/dan_pun US pathway);
         the measured DAN activity GATES the update: no DAN firing -> no learning
@@ -2323,6 +2323,9 @@ class FlyBrainAPI:
         PAM depresses active KC->avoid-MBON, PPL1 active KC->approach-MBON
         (Handler 2019 / Hige 2015 compartment logic; magnitudes = legacy slab).
         dan_block=True = optogenetic DAN block control (US without DAN -> s=0).
+        assoc>0 = associability (Pearce-Hall-like novelty bonus): unfamiliar KC
+        codes learn (1+assoc*(1-familiarity))x faster; familiarity = EMA overlap
+        of recent KC codes. 0 (default) = legacy uniform speed.
         stdp=True (spike only): trace-STDP in-loop + gated slab below.
         gated=True: KC-uniqueness weighting (x_remember codes); False: legacy.
         hops=None -> default from set_hops(). Returns post-learning step()."""
@@ -2351,6 +2354,20 @@ class FlyBrainAPI:
             h = self._forward_full(idx, val) if self.mode in ("full", "banc", "mcns") else self._forward_mb(idx, val)
             kcs = h[self.KC].mean(axis=1)
         m = kcs >= np.sort(kcs)[-max(1, int(len(kcs)*0.05))]
+        # --- associability: novelty bonus from KC-code familiarity ---
+        _ag = 1.0
+        if assoc and float(assoc) > 0:
+            _fam = getattr(self, "_kc_fam", None)
+            if _fam is None or len(_fam) != len(m):
+                _fam = np.zeros(len(m), dtype=np.float32)
+            _m = np.asarray(m, dtype=bool)
+            _tot = float(_m.sum())
+            if _tot > 0 and float(_fam.sum()) > 0:
+                _ov = float((_m * (_fam / max(_fam.sum(), 1e-9))).sum() / _tot)
+            else:
+                _ov = 0.0 if _tot > 0 else 1.0
+            _ag = 1.0 + float(assoc) * max(0.0, 1.0 - _ov)
+            self._kc_fam = (0.9 * _fam + 0.1 * _m.astype(np.float32)).astype(np.float32)
         # --- third factor: measured DAN activity gates learning ---
         _ha = h.mean(axis=1).astype(np.float32) if getattr(h, "ndim", 1) > 1 else h
         _dpam = float(_ha[np.asarray(self.dan_pam, dtype=np.int32)].mean()) if len(self.dan_pam) else 0.0
@@ -2386,7 +2403,7 @@ class FlyBrainAPI:
                 self.elig[e] = self.elig[e]*0.9 + (a[self.pre[e]]*a[self.post[e]]).astype(np.float32)
             for s in range(0, self.E, self.CH):
                 e = slice(s, min(s+self.CH, self.E))
-                dw = np.clip(0.002*float(reward)*_s_r*self.elig[e], -0.02*self.wM[e], 0.02*self.wM[e])
+                dw = np.clip(0.002*float(reward)*_s_r*_ag*self.elig[e], -0.02*self.wM[e], 0.02*self.wM[e])
                 self.wM[e] = np.clip(self.wM[e]+dw-1e-6, 0.05, 650.0)
             cur = np.zeros(self.N); np.add.at(cur, self.post, self.wM.astype(float))
             sc = np.ones(self.N); nz = cur > 1e-9
@@ -2421,20 +2438,20 @@ class FlyBrainAPI:
         if reward > 0:
             sel = self.km_is_avoid & m[self.km_ki]
             if fkc is None:
-                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-0.15*_s_r),
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-0.15*_s_r*_ag),
                                                  self.wM[self.km_mask])
             else:
-                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-(1.0-fkc)*_s_r),
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-(1.0-fkc)*_s_r*_ag),
                                                  self.wM[self.km_mask])
             if _s_r > 0:
                 self._km_tag.update(_kidx[sel].tolist())
         if punish > 0:
             sel = self.km_is_approach & m[self.km_ki]
             if fkc is None:
-                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-0.15*_s_p),
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-0.15*_s_p*_ag),
                                                  self.wM[self.km_mask])
             else:
-                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-(1.0-fkc)*_s_p),
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-(1.0-fkc)*_s_p*_ag),
                                                  self.wM[self.km_mask])
             if _s_p > 0:
                 self._km_tag.update(_kidx[sel].tolist())

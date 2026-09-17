@@ -320,7 +320,9 @@ std::vector<float> FlyBrain::forward_spike(const std::vector<int32_t>& idx,
             if (gp < 0) gp = 0; if (gp > 2) gp = 2;
             da_g = gr > gp ? gr : gp;
         }
-        if (plastic && t >= BURN) {
+        if (plastic) {
+            // trace decay, every ms including burn (Python parity; DEC_T
+            // was dead code since the b719e32 port - traces never decayed)
             for (size_t i = 0; i < tr_pre.size(); i++) {
                 tr_pre[i] *= DEC_T; tr_post[i] *= DEC_T;
             }

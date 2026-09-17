@@ -157,7 +157,7 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
                excess=False, rel_rule=False, ohlc=False, conf_k=0.0,
                short=False, sleep_every=0, size=False,
                horizon=1, years=None, brain=None, mode="mb",
-               days=None, sleep_big=0.0, replay_top=0, rollout_H=0,
+               days=None, sleep_big=0.0, replay_top=0, rollout_H=0, assoc=0.0,
                vol_target=0.0, hyst=None, trend_n=0, tstop=0.0,
                tstop_vol=0.0):
     cl = load(sym)
@@ -308,9 +308,9 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
         # valence - depress approach on short-profit, avoid on short-loss
         _sgn = -1.0 if pos < 0 else 1.0
         if ex * _sgn > 0:
-            b.train(odor=_fe, reward=s)
+            b.train(odor=_fe, reward=s, assoc=assoc)
         elif ex * _sgn < 0:
-            b.train(odor=_fe, punish=s * punish_scale)
+            b.train(odor=_fe, punish=s * punish_scale, assoc=assoc)
         prev_feat = feat
         hist.append((feat.copy(), float(pos), float(_fc)))
         # sleep consolidation after BIG days only (not calendar): today's
@@ -343,9 +343,9 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
             _hex = (_hp * _mktH - _fcH) if not excess else ((_hp - 1.0) * _mktH - _fcH)
             _ss = min(abs(_hex) / (0.02 * horizon), 1.0)
             if _hex > 0:
-                b.train(odor=_hf if _nomap else place(_hf, _live), reward=_ss)
+                b.train(odor=_hf if _nomap else place(_hf, _live), reward=_ss, assoc=assoc)
             elif _hex < 0:
-                b.train(odor=_hf if _nomap else place(_hf, _live), punish=_ss * punish_scale)
+                b.train(odor=_hf if _nomap else place(_hf, _live), punish=_ss * punish_scale, assoc=assoc)
         if sleep_every > 0 and (t - t0) % sleep_every == 0 and t > t0:
             b.sleep(2)
     rets_fly = np.array(rets_fly)
