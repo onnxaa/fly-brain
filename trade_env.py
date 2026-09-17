@@ -16,6 +16,11 @@ MEASURED (SPY+QQQ daily 2018-2024, walk-forward, 2bp costs, mb mode):
   dimensionality curse - fewer codes, more trials per code). Costs 2bp
   (5bp: x2.12, 10bp: x1.85). SHORT: suicide in secular bull - dropped.
   Deterministic (identical across PYTHONHASHSEED).
+  CROSS-BRAIN (2024 SPY, same protocol): mb x1.12/+1.49/DD4% vs MCNS
+  (male whole-CNS, chained 3x85d) x1.12/Sharpe +1.4..+2.0/DD~4% vs BH x1.24
+  - IDENTICAL behavior across substrates: the market pattern, not the
+  brain extract, drives the strategy. MCNS needs no dead-slot map
+  (ORN 2-hop path).
 
 Setup (honest classical conditioning, no numeracy/gradient planning):
 - 1 step = 1 trading day. State = 6-dim market feature vector, encoded as
@@ -139,11 +144,13 @@ def place(feat, live):
 def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
                excess=False, rel_rule=False, ohlc=False, conf_k=0.0,
                short=False, sleep_every=0, size=False,
-               horizon=1, years=None, brain=None):
+               horizon=1, years=None, brain=None, mode="mb",
+               days=None):
     cl = load(sym)
     rets = cl[1:] / cl[:-1] - 1
     yrs = load_ohlc(sym)["yr"] if years else None
-    b = brain or FlyBrainAPI(mode="mb", path=".", seed=seed)
+    b = brain or FlyBrainAPI(mode=mode, path=".", seed=seed)
+    _nomap = (mode != "mb")  # mb ALPN has dead slots; CNS ORN path does not
     if leak > 0:
         b.set_state(leak)
     # warmup: odor baseline not needed; start after 25 bars of history
@@ -162,11 +169,14 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
         _t1 = 0  # iterate explicit list below
     else:
         _in = list(range(t0, len(cl) - 1))
+    if days:
+        _in = _in[days[0]:days[1]]
     for t in _in:
         feat = features2(d, t) if ohlc else features(cl, t)
-        if _live is None:
+        if _live is None and not _nomap:
             _live = live_slots(b, need=len(feat))
-        o = b.step(odor=place(feat, _live))
+        _fe = feat if _nomap else place(feat, _live)
+        o = b.step(odor=_fe)
         if rel_rule or conf_k > 0 or short:
             # relative preference + confidence gate + optional SHORT side
             # (engineered extension: strong avoidance = active short)
@@ -204,9 +214,9 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
         # valence - depress approach on short-profit, avoid on short-loss
         _sgn = -1.0 if pos < 0 else 1.0
         if ex * _sgn > 0:
-            b.train(odor=place(feat, _live), reward=s)
+            b.train(odor=_fe, reward=s)
         elif ex * _sgn < 0:
-            b.train(odor=place(feat, _live), punish=s * punish_scale)
+            b.train(odor=_fe, punish=s * punish_scale)
         prev_feat = feat
         hist.append((feat.copy(), float(pos)))
         _ = ex * _sgn  # (daily signed outcome already taught above)
@@ -220,9 +230,9 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
             _hex = _hp * _mktH if not excess else (_hp - 1.0) * _mktH
             _ss = min(abs(_hex) / (0.02 * horizon), 1.0)
             if _hex > 0:
-                b.train(odor=place(_hf, _live), reward=_ss)
+                b.train(odor=_hf if _nomap else place(_hf, _live), reward=_ss)
             elif _hex < 0:
-                b.train(odor=place(_hf, _live), punish=_ss * punish_scale)
+                b.train(odor=_hf if _nomap else place(_hf, _live), punish=_ss * punish_scale)
         if sleep_every > 0 and (t - t0) % sleep_every == 0 and t > t0:
             b.sleep(2)
     rets_fly = np.array(rets_fly)
