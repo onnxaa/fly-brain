@@ -15,6 +15,11 @@ MEASURED (SPY+QQQ daily 2018-2024, walk-forward, 2bp costs, mb mode):
   x1.16/+0.43 - positive Sharpe, trails the bull-transition. NULLS: colonies dilute,
   sleep/replay/gate/sizing move nothing (rel-rule fixed point), DD-aversion backfires;
   SHORT suicide in secular bull. Costs 2bp (5bp: x2.12, 10bp: x1.85).
+  WORLD MODEL (ridge feat->next-feat, numpy): ret1 R2=0.006, sign 54.5% vs
+  54.6% base = NOISE (weak-form EMH holds); vol R2=0.98, ret20 0.90.
+  Consequence: DIRECTION rollout H2 HURTS (tune x1.38/+0.58 vs x2.21/+1.39).
+  Vol-target sizing helps tune (+1.47 at 0.25) but FAILS holdout (+0.08 vs
+  +0.37) = overfit to 2020 vol spike; REJECTED. Champion stays model-free.
   Deterministic (identical across PYTHONHASHSEED).
   CROSS-BRAIN (2024 SPY, same protocol): mb x1.12/+1.49/DD4% vs MCNS
   (male whole-CNS, chained 3x85d) x1.12/Sharpe +1.4..+2.0/DD~4% vs BH x1.24
@@ -145,7 +150,8 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
                excess=False, rel_rule=False, ohlc=False, conf_k=0.0,
                short=False, sleep_every=0, size=False,
                horizon=1, years=None, brain=None, mode="mb",
-               days=None, sleep_big=0.0, replay_top=0):
+               days=None, sleep_big=0.0, replay_top=0, rollout_H=0,
+               vol_target=0.0):
     cl = load(sym)
     rets = cl[1:] / cl[:-1] - 1
     yrs = load_ohlc(sym)["yr"] if years else None
@@ -162,6 +168,9 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
     prev_feat = None
     hist = []  # (feat, pos, flipcost) for horizon teaching
     _rbuf = []  # hippocampal replay buffer: (feat, reward, punish) strong only
+    _Fhist = []  # realized features for the world model (rollout only)
+    _W = None  # ridge world-model weights (feat -> next feat)
+    _lastfit = -10**9
     d = load_ohlc(sym) if ohlc else None
     _live = None
     _t1 = len(cl) - 1
@@ -177,6 +186,23 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
         if _live is None and not _nomap:
             _live = live_slots(b, need=len(feat))
         _fe = feat if _nomap else place(feat, _live)
+        # world-model rollout (model-predictive control, opt-in): simulate
+        # H days ahead per candidate action with the FLY's own policy on
+        # predicted features; pick argmax rollout value. Brain state
+        # snapshotted/restored (no learning, no history pollution inside).
+        # NOTE measured: ret1 R2=0.006 (noise) -> DIRECTION rollout hurts;
+        # vol R2=0.98 -> use world model for RISK sizing (vol_target), not
+        # direction. Set rollout_H=0 with vol_target>0 for sizing only.
+        if rollout_H > 0 or vol_target > 0:
+            _Fhist.append(feat.copy())
+            del _Fhist[:-300]
+            if t - _lastfit >= 20 and len(_Fhist) >= 60:
+                _A = np.stack(_Fhist[:-1]); _A1 = np.concatenate(
+                    [_A, np.ones((len(_A), 1))], axis=1)
+                _B = np.stack(_Fhist[1:])
+                _W = np.linalg.solve(
+                    _A1.T @ _A1 + 1.0 * np.eye(_A1.shape[1]), _A1.T @ _B)
+                _lastfit = t
         o = b.step(odor=_fe)
         if rel_rule or conf_k > 0 or short:
             # relative preference + confidence gate + optional SHORT side
@@ -198,6 +224,39 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
                 new_pos = 0
         else:
             new_pos = 1 if o["MB_app"] > o["MB_avo"] else 0
+        if rollout_H > 0 and _W is not None and len(getattr(b, "_pref_hist", [])) >= 20:
+            # MPC: candidate actions x H simulated days; predicted return
+            # decoded from feat[0] (ret_1 channel, inverse z-scaling)
+            _snap_h = b._hprev.copy() if getattr(b, "_hprev", None) is not None else None
+            _snap_p = list(getattr(b, "_pref_hist", []))
+            _thr0 = float(np.median(_snap_p))
+            def _sim_pos(ff):
+                _oo = b.step(odor=ff if _nomap else place(ff, _live))
+                return 1.0 if (_oo["MB_app"] - _oo["MB_avo"]) > _thr0 else 0.0
+            def _val(a0):
+                _fs = feat.copy()
+                _aa = float(a0)
+                _vv = -COST * abs(_aa - pos)  # entry cost from real position
+                for _k in range(rollout_H):
+                    _fp = np.clip(np.concatenate(
+                        [_fs, np.ones(1)]) @ _W, 0.0, 1.0)
+                    _pa = _sim_pos(_fp)
+                    _rt = float((_fp[0] - 0.5) * 0.04)
+                    _vv += _aa * _rt - COST * abs(_pa - _aa)
+                    _aa, _fs = _pa, _fp
+                return _vv
+            _v1, _v0 = _val(1.0), _val(0.0)
+            new_pos = 1 if _v1 > _v0 else (0 if _v0 > _v1 else new_pos)
+            if _snap_h is not None:
+                b._hprev = _snap_h
+            b._pref_hist = _snap_p
+        if vol_target > 0 and _W is not None:
+            # risk sizing from PREDICTED vol (the predictable channel):
+            # scale exposure toward target_vol/pred_vol (cap at 1)
+            _fp0 = np.clip(np.concatenate(
+                [feat.copy(), np.ones(1)]) @ _W, 0.0, 1.0)
+            _pv = float((_fp0[3] - 0.5) * 0.4 + 0.2)
+            new_pos = float(new_pos * min(1.0, vol_target / max(_pv, 1e-9)))
         _fc = COST * abs(new_pos - pos) if abs(new_pos - pos) > 1e-9 else 0.0
         if _fc > 0:
             eq *= (1 - _fc)
