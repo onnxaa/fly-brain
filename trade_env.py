@@ -457,6 +457,24 @@ def run_ensemble(sym, configs, years=None, seed=1, verbose=True, wwin=60):
     return {"tot": tot, "bh": bh, "sharpe": sh, "dd": dd, "eq": eqs}
 
 
+def run_portfolio(syms=("spy", "qqq"), verbose=True, **kw):
+    """Equal-weight multi-market portfolio, independent brain per leg
+    (own features/history/training; no rebalance). Diversification is the
+    only free Sharpe in finance - tests whether fly edges stack."""
+    legs = [run_market(s, verbose=False, **kw) for s in syms]
+    n = min(len(l["eq"]) for l in legs)
+    eq = sum(np.array(l["eq"][:n]) for l in legs) / len(legs)
+    bh = float(sum(l["bh"] for l in legs) / len(legs))
+    rr = np.diff(eq, prepend=1.0)
+    sh = float(rr.mean() / (rr.std() + 1e-12) * np.sqrt(252))
+    run = np.maximum.accumulate(eq)
+    dd = float(((run - eq) / run).max())
+    if verbose:
+        print(f"PORT{syms}: fly x{eq[-1]:.2f}  BH x{bh:.2f}  Sharpe {sh:+.2f}  "
+              f"maxDD {dd:.1%}  (n={n})", flush=True)
+    return {"tot": float(eq[-1]), "bh": bh, "sharpe": sh, "dd": dd, "eq": eq}
+
+
 def baselines(sym):
     cl = load(sym)
     t0 = 25
