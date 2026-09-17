@@ -15,6 +15,13 @@ MEASURED (SPY+QQQ daily 2018-2024, walk-forward, 2bp costs, mb mode):
   x1.16/+0.43 - positive Sharpe, trails the bull-transition. NULLS: colonies dilute,
   sleep/replay/gate/sizing move nothing (rel-rule fixed point), DD-aversion backfires;
   SHORT suicide in secular bull. Costs 2bp (5bp: x2.12, 10bp: x1.85).
+  SURVIVAL+PROFIT round (all REJECTED by cross-market rule): hysteresis
+  (0.5,-0.5) wins tune+holdout SPY (+1.48/+0.47) but loses SPY-full
+  (x2.44/+0.91 vs 2.78/1.05) and QQQ (x2.28/+0.74 vs 3.29/1.02);
+  fixed trailing stop 0.08 wins tune (+1.63) but bleeds QQQ moon-bull;
+  vol-scaled stop null; 200d trend gate sits out V-recoveries (x1.54);
+  DD-averse punish backfires (helplessness spiral). Hand overlays overfit
+  regimes; learned policy already balances. Base H6 stands.
   WORLD MODEL (ridge feat->next-feat, numpy): ret1 R2=0.006, sign 54.5% vs
   54.6% base = NOISE (weak-form EMH holds); vol R2=0.98, ret20 0.90.
   Consequence: DIRECTION rollout H2 HURTS (tune x1.38/+0.58 vs x2.21/+1.39).
@@ -151,7 +158,8 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
                short=False, sleep_every=0, size=False,
                horizon=1, years=None, brain=None, mode="mb",
                days=None, sleep_big=0.0, replay_top=0, rollout_H=0,
-               vol_target=0.0):
+               vol_target=0.0, hyst=None, trend_n=0, tstop=0.0,
+               tstop_vol=0.0):
     cl = load(sym)
     rets = cl[1:] / cl[:-1] - 1
     yrs = load_ohlc(sym)["yr"] if years else None
@@ -213,7 +221,16 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
             _sd = float(np.std(_hist)) if len(_hist) >= 20 else 1.0
             _hist.append(_pref)
             b._pref_hist = _hist[-500:]
-            if size and not short and conf_k == 0.0:
+            if hyst is not None and not short and not size and conf_k == 0.0:
+                # HYSTERESIS (survival + profit): selective entry, tolerant
+                # hold (ride trends through noise), exit below lower band.
+                # pos = previous position (state-dependent thresholds).
+                _ehi, _elo = hyst
+                if pos > 0:
+                    new_pos = 1 if _pref > _thr + _elo * _sd else 0
+                else:
+                    new_pos = 1 if _pref > _thr + _ehi * _sd else 0
+            elif size and not short and conf_k == 0.0:
                 # fractional confidence sizing (no leverage, |dpos| costs)
                 new_pos = float(np.clip((_pref - _thr) / (2 * _sd + 1e-9), 0.0, 1.0))
             elif short and _pref < _thr - conf_k * _sd:
@@ -224,6 +241,22 @@ def run_market(sym, leak=0.0, seed=1, verbose=True, punish_scale=1.0,
                 new_pos = 0
         else:
             new_pos = 1 if o["MB_app"] > o["MB_avo"] else 0
+        # trend gate (regime confirmation) + trailing stop (risk overlay)
+        if trend_n > 0 and new_pos > 0 and t >= trend_n:
+            if cl[t] / cl[t - trend_n] - 1 <= 0:
+                new_pos = 0
+        if tstop > 0 or tstop_vol > 0:
+            if pos <= 0 and new_pos > 0:
+                _entry = cl[t]  # (re)entry price
+            elif pos > 0 and new_pos > 0:
+                _thr_stop = tstop
+                if tstop_vol > 0 and t >= 21:
+                    _thr_stop = tstop_vol * float(
+                        np.std(rets[t - 20:t]) + 1e-9)
+                if cl[t] / _entry - 1 < -_thr_stop:
+                    new_pos = 0
+            if pos <= 0:
+                _entry = cl[t]
         if rollout_H > 0 and _W is not None and len(getattr(b, "_pref_hist", [])) >= 20:
             # MPC: candidate actions x H simulated days; predicted return
             # decoded from feat[0] (ret_1 channel, inverse z-scaling)
