@@ -736,4 +736,58 @@ void test_attractor(const std::string& data, const std::string& mode) {
     std::printf(fails ? "FAILURES: %d\n" : "ALL PASS\n", fails);
 }
 
+// Third-factor (DAN-gated) learning (mirrors test_learn3f.py).
+void test_learn3f(const std::string& data, const std::string& mode) {
+    int fails = 0;
+    auto check = [&](const std::string& name, bool ok, const std::string& info = "") {
+        std::printf("%s %s %s\n", ok ? "PASS" : "FAIL", name.c_str(), info.c_str());
+        if (!ok) fails++;
+    };
+    auto mkodor = [](const std::string& o) { Stim s; s.has_odor_str = true; s.odor_str = o; return s; };
+    // US separation
+    {
+        FlyBrain b(mode, data); b.enable_scaling();
+        Stim r; r.dan_rew = 1.0f; Out o = b.step(r);
+        Stim p; p.dan_pun = 1.0f; Out q = b.step(p);
+        check("us-sep", o.DAN_pam > 1.0f && q.DAN_ppl > 1.0f && o.DAN_ppl < 0.1f && q.DAN_pam < 0.1f,
+              "PAM=" + std::to_string(o.DAN_pam) + " PPL=" + std::to_string(q.DAN_ppl));
+    }
+    auto pref_after = [&](float rw, bool block, float pu = 0.0f) {
+        FlyBrain b(mode, data); b.enable_scaling();
+        float b0 = b.step(mkodor("A")).MB_pref;
+        for (int i = 0; i < 3; i++) b.train(mkodor("A"), rw, pu, true, -1, 0.0f, false, block);
+        return std::make_pair(b0, b.step(mkodor("A")).MB_pref);
+    };
+    {
+        auto d0 = pref_after(0.0f, false), d5 = pref_after(0.5f, false), d1 = pref_after(1.0f, false);
+        bool ok = std::fabs(d0.second - d0.first) < 1e-6f &&
+                  (d5.second - d5.first) > 0 && (d1.second - d1.first) > (d5.second - d5.first);
+        check("graded", ok, "d=" + std::to_string(d0.second - d0.first) + "/" +
+              std::to_string(d5.second - d5.first) + "/" + std::to_string(d1.second - d1.first));
+    }
+    {
+        auto dd = pref_after(1.0f, true);
+        check("blocked", std::fabs(dd.second - dd.first) < 1e-6f,
+              "d=" + std::to_string(dd.second - dd.first));
+    }
+    {
+        FlyBrain b(mode, data); b.enable_scaling();
+        b.train(mkodor("A"), 1.0f, 0.0f); b.train(mkodor("A"), 1.0f, 0.0f);
+        float pre = b.step(mkodor("A")).MB_pref;
+        b.train(mkodor("A"), 0.0f, 1.0f); b.train(mkodor("A"), 0.0f, 1.0f);
+        float post = b.step(mkodor("A")).MB_pref;
+        check("reversal", post < pre, std::to_string(pre) + " -> " + std::to_string(post));
+    }
+    {
+        FlyBrain b(mode, data); b.enable_scaling();
+        for (int i = 0; i < 3; i++) b.train(mkodor("A"), 1.0f, 0.0f);
+        float pre = b.step(mkodor("A")).MB_pref;
+        b.sleep(5, 0.1f);
+        float post = b.step(mkodor("A")).MB_pref;
+        check("tag", pre != 0.0f && post / pre > 0.9f,
+              std::to_string(pre) + " -> " + std::to_string(post));
+    }
+    std::printf(fails ? "FAILURES: %d\n" : "ALL PASS\n", fails);
+}
+
 }} // namespace fly::battery

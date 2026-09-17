@@ -136,6 +136,10 @@ banc.set_activation("spike")
 banc.set_cx_gain(spk=2.0, spk_inh=2.5, std_u=0.08, bg=0.0, plat=1.0, tonic=0.06)
 ```
 
+Learning is real synapses now: `train(odor, reward/punish)` drives PAM/PPL
+(`dan_rew/dan_pun` US pathway) and the measured DAN activity GATES KC->MBON
+depression (Handler/Hige compartment logic, self-calibrated; `dan_block`
+control gives zero learning; sleep tags protect fresh traces 95% vs 59%).
 Inputs combine freely: `odor` (DoOR name / 'A'/'B' / vector), `odor_left/right`,
 `image` (full/banc retinotopic, mcns homology+eye-split), `mech`,
 `mech_left/right`, `alpn` (full only), `dan_rew/dan_pun`, tastes

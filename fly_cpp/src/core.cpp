@@ -40,6 +40,8 @@ FlyBrain::FlyBrain(const std::string& m, const std::string& path, int) { load(m,
 
 void FlyBrain::load(const std::string& m, const std::string& path) {
     mode = m; datapath = path;
+    dan_ref_done = false; dan_ref_pam = 0.0f; dan_ref_pun = 0.0f;
+    cx_armed = false; cx_cached_n = -1; cx_spk_cached_n = -1;
     auto L32 = [&](const std::string& n) {
         return load_i32(path + "/" + n + ".i32", file_size(path + "/" + n + ".i32") / 4);
     };
@@ -631,6 +633,10 @@ void FlyBrain::encode(const Stim& s, std::vector<int32_t>& idx, std::vector<floa
     }
     if (std::fabs(s.angvel) > 0 && (mode == "banc" || mode == "mcns") && !CX_EPGv.empty())
         cx_armed = true;
+    if (s.dan_rew != 0.0f && !dan_pam.empty())
+        for (auto id : dan_pam) { idx.push_back(id); val.push_back(s.dan_rew*2.0f); }
+    if (s.dan_pun != 0.0f && !dan_ppl.empty())
+        for (auto id : dan_ppl) { idx.push_back(id); val.push_back(s.dan_pun*2.0f); }
     if (s.has_image) {
         if (R.empty())
             throw std::runtime_error("images require R photoreceptors (not mb)");
@@ -1093,13 +1099,48 @@ Out FlyBrain::step(const Stim& s, int hops_o, float thr) {
     return o;
 }
 
-Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int hops_o, float thr, bool stdp) {
+Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int hops_o, float thr, bool stdp,
+                     bool dan_block) {
     int hh = (hops_o < 0) ? hops : hops_o;
+    // third factor: US drives DAN (unless blocked); measured DAN gates KM updates
+    Stim su = s;
+    if (!dan_block) {
+        if (reward != 0.0f && su.dan_rew == 0.0f) su.dan_rew = reward;
+        if (punish != 0.0f && su.dan_pun == 0.0f) su.dan_pun = punish;
+    }
     std::vector<int32_t> idx; std::vector<float> vv;
     std::map<std::string,float> mo; bool hm=false;
-    encode(s, idx, vv, mo, hm);
+    encode(su, idx, vv, mo, hm);
     bool spk = (act=="spike");
     std::vector<float> h = spk ? forward_spike(idx, vv, stdp) : forward_pure(idx, vv, hh, thr);
+    double dpam = 0, dppl = 0;
+    for (auto id : dan_pam) if (id >= 0 && id < N) dpam += h[(size_t)id];
+    for (auto id : dan_ppl) if (id >= 0 && id < N) dppl += h[(size_t)id];
+    if (!dan_pam.empty()) dpam /= dan_pam.size();
+    if (!dan_ppl.empty()) dppl /= dan_ppl.size();
+    if (!dan_ref_done && (reward != 0.0f || punish != 0.0f) && !dan_block) {
+        // self-calibration: US-alone DAN response (units follow forward)
+        Stim sc;
+        sc.dan_rew = 1.0f; sc.dan_pun = 1.0f;
+        std::vector<int32_t> ix; std::vector<float> vx;
+        std::map<std::string,float> mo2; bool hm2=false;
+        encode(sc, ix, vx, mo2, hm2);
+        std::vector<float> uh = spk ? forward_spike(ix, vx, false) : forward_pure(ix, vx, hh, thr);
+        double rp = 0, rn = 0;
+        for (auto id : dan_pam) if (id >= 0 && id < N) rp += uh[(size_t)id];
+        for (auto id : dan_ppl) if (id >= 0 && id < N) rn += uh[(size_t)id];
+        if (!dan_pam.empty()) rp /= dan_pam.size();
+        if (!dan_ppl.empty()) rn /= dan_ppl.size();
+        dan_ref_pam = (float)rp; dan_ref_pun = (float)rn;
+        dan_ref_done = true;
+    }
+    float s_r = 0.0f, s_p = 0.0f;
+    if (reward != 0.0f && !dan_block && dan_ref_pam > 1e-9f) {
+        s_r = (float)(dpam / dan_ref_pam); if (s_r < 0) s_r = 0; if (s_r > 1) s_r = 1;
+    }
+    if (punish != 0.0f && !dan_block && dan_ref_pun > 1e-9f) {
+        s_p = (float)(dppl / dan_ref_pun); if (s_p < 0) s_p = 0; if (s_p > 1) s_p = 1;
+    }
     if (spk && stdp) refresh_weights();
     size_t nKC = KC.size();
     std::vector<float> kcs(nKC);
@@ -1119,7 +1160,7 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
             float a1=h[(size_t)pre[ee]], a2=h[(size_t)post[ee]];
             float el = elig[ee]*0.9f + a1*a2;
             elig[ee] = el;
-            float dw = 0.002f*reward*el;
+            float dw = 0.002f*reward*s_r*el;
             float lo=-0.02f*wM[ee], hi=0.02f*wM[ee];
             if(dw<lo)dw=lo; if(dw>hi)dw=hi;
             float nw=wM[ee]+dw-1e-6f; if(nw<0.05f)nw=0.05f; if(nw>650.0f)nw=650.0f;
@@ -1162,15 +1203,17 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
         }
         use_fkc=true;
     }
+    if (km_tag.size() != km_e.size()) km_tag.assign(km_e.size(), 0);
     if (reward>0) {
         for(size_t j=0;j<km_e.size();j++){
             if(!km_is_avoid[j]) continue;
             int ki=km_ki[j];
             if(ki<0||(size_t)ki>=m.size()||!m[(size_t)ki]) continue;
             int64_t e=km_e[j];
-            float nw=wM[(size_t)e]*(use_fkc?fkc[j]:0.85f);
-            wM[(size_t)e]=nw;
+            float f = use_fkc ? (1.0f-(1.0f-fkc[j])*s_r) : (1.0f-0.15f*s_r);
+            wM[(size_t)e]=wM[(size_t)e]*f;
             csr_update_edge(e);
+            if (s_r > 0) km_tag[j] = 1;
         }
     }
     if (punish>0) {
@@ -1179,9 +1222,10 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
             int ki=km_ki[j];
             if(ki<0||(size_t)ki>=m.size()||!m[(size_t)ki]) continue;
             int64_t e=km_e[j];
-            float nw=wM[(size_t)e]*(use_fkc?fkc[j]:0.85f);
-            wM[(size_t)e]=nw;
+            float f = use_fkc ? (1.0f-(1.0f-fkc[j])*s_p) : (1.0f-0.15f*s_p);
+            wM[(size_t)e]=wM[(size_t)e]*f;
             csr_update_edge(e);
+            if (s_p > 0) km_tag[j] = 1;
         }
     }
     for(auto e: km_e) {
@@ -1205,6 +1249,14 @@ Out FlyBrain::train(const Stim& s, float reward, float punish, bool gated, int h
 
 void FlyBrain::sleep(int episodes, float rate) {
     // fused wash + CSR write-through (was: wash passes + full CSR rebuild)
+    // tagged KM edges (learned since last sleep) wash at 1/10 rate
+    // (synaptic tagging/capture); tags clear after sleep.
+    if (km_tag.size() != km_e.size()) km_tag.assign(km_e.size(), 0);
+    std::vector<int64_t> tagged;
+    for (size_t j = 0; j < km_e.size(); j++)
+        if (km_tag[j]) tagged.push_back(km_e[j]);
+    std::vector<float> snap(tagged.size());
+    for (size_t i = 0; i < tagged.size(); i++) snap[i] = wM[(size_t)tagged[i]];
     for(int k=0;k<episodes;k++) {
         int64_t n = (int64_t)wM.size();
         #pragma omp parallel for schedule(static) if(n>1000000)
@@ -1214,7 +1266,18 @@ void FlyBrain::sleep(int episodes, float rate) {
             wM[ee]=nw;
             csr_update_edge(ee);
         }
+        if (!tagged.empty()) {
+            // undo 90% of this episode's wash: want pre-0.1r(pre-w0);
+            // washed w = pre-r(pre-w0) -> pre-w0 = (w-w0)/(1-r)
+            float f = (rate >= 1.0f) ? 0.0f : 0.9f*rate/(1.0f-rate);
+            for (size_t i = 0; i < tagged.size(); i++) {
+                size_t ee = (size_t)tagged[i];
+                wM[ee] = wM[ee] + f*(wM[ee]-wM0[ee]);
+                csr_update_edge((int64_t)ee);
+            }
+        }
     }
+    std::fill(km_tag.begin(), km_tag.end(), 0);
     std::vector<float> cur(MBON.size(),0.0f);
     for(size_t j=0;j<km_e.size();j++) cur[(size_t)km_mi[j]]+=wM[(size_t)km_e[j]];
     ref_mb=cur;

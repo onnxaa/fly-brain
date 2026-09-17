@@ -27,6 +27,8 @@ struct Stim {
     // pool (visual landmark); angvel = angular velocity in ring-ranks/step
     std::vector<float> cx_cue; bool has_cx_cue = false;
     float angvel = 0.0f;
+    // US pathway: reward -> PAM DAN, punishment -> PPL DAN (3rd factor)
+    float dan_rew = 0.0f, dan_pun = 0.0f;
 };
 
 struct Out {
@@ -243,7 +245,12 @@ public:
     Out step(const Stim& s, int hops = -1, float thr = 0.0f);
     Out train(const Stim& s, float reward = 0.0f, float punish = 0.0f,
               bool gated = true, int hops = -1, float thr = 0.0f,
-              bool stdp = false);
+              bool stdp = false, bool dan_block = false);
+    // third-factor calibration (US-alone DAN response, per instance)
+    float dan_ref_pam = 0.0f, dan_ref_pun = 0.0f;
+    bool dan_ref_done = false;
+    // synaptic tag: KM edges learned since last sleep wash at 1/10 rate
+    std::vector<char> km_tag;
     void sleep(int episodes = 1, float rate = 0.02f);
     void save_wbin(const std::string& path);
     void load_wbin(const std::string& path);

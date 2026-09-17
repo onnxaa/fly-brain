@@ -1227,7 +1227,8 @@ class FlyBrainAPI:
         return oi[keep], ov[keep]
 
     def encode(self, image=None, odor=None, mech=None, alpn=None, odor_left=None, odor_right=None,
-               mech_left=None, mech_right=None, vpol="lum", cx_cue=None, angvel=0.0):
+               mech_left=None, mech_right=None, vpol="lum", cx_cue=None, angvel=0.0,
+               dan_rew=0.0, dan_pun=0.0):
         """Returns (idx, val, info): info has 'motion' when motion was computed."""
         info = {}
         idx, val = [], []
@@ -1280,6 +1281,15 @@ class FlyBrainAPI:
         if alpn is not None and len(self.ALPN):
             a = np.asarray(alpn, dtype=np.float32); n = min(len(a), len(self.ALPN))
             idx.append(self.ALPN[:n]); val.append((a[:n]*2.0).astype(np.float32))
+        # US pathway (protocol, like mech drives): reward -> PAM DAN,
+        # punishment -> PPL DAN. Models the unconditioned-stimulus input;
+        # train() wires reward/punish here and reads DAN back as 3rd factor.
+        if dan_rew is not None and float(dan_rew) != 0.0 and len(getattr(self, "dan_pam", [])):
+            idx.append(np.asarray(self.dan_pam, dtype=np.int32))
+            val.append(np.full(len(self.dan_pam), float(dan_rew) * 2.0, np.float32))
+        if dan_pun is not None and float(dan_pun) != 0.0 and len(getattr(self, "dan_ppl", [])):
+            idx.append(np.asarray(self.dan_ppl, dtype=np.int32))
+            val.append(np.full(len(self.dan_ppl), float(dan_pun) * 2.0, np.float32))
         if (odor_left is not None or odor_right is not None):
             if self.mode not in ("full", "banc", "mcns") or not len(getattr(self, "ORN_L", [])):
                 raise ValueError("lateral odors require mode='full' with ORN_L/R (laterality.py)")
@@ -1669,7 +1679,7 @@ class FlyBrainAPI:
 
     def step(self, image=None, odor=None, mech=None, alpn=None, hops=None, pure=None, thr=0.0,
              odor_left=None, odor_right=None, mech_left=None, mech_right=None, vpol="lum",
-             cx_cue=None, angvel=0.0):
+             cx_cue=None, angvel=0.0, dan_rew=0.0, dan_pun=0.0):
         # NOTE timescales: one step = 1 behavioral trial (seconds-minutes). The clock ticks
         # ONLY via tick_clock() - otherwise a 10Hz mob would spin a day in 2s.
         # hops=None -> self._hops (set_hops); mb default 1, full default 2.
@@ -1680,7 +1690,8 @@ class FlyBrainAPI:
         idx, val, info = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
                                      odor_left=odor_left, odor_right=odor_right,
                                      mech_left=mech_left, mech_right=mech_right, vpol=vpol,
-                                     cx_cue=cx_cue, angvel=angvel)
+                                     cx_cue=cx_cue, angvel=angvel,
+                                     dan_rew=dan_rew, dan_pun=dan_pun)
         _st = getattr(self, "_std", None)
         if _st is not None and _st["alpha"] > 0:
             idx, val = self._apply_std(idx, val, _st["alpha"], _st["tau"])
@@ -1846,9 +1857,22 @@ class FlyBrainAPI:
         """Sleep (synaptic homeostasis SHY, Tononi-Cirelli): proportional downscaling of
         magnitudes toward baseline (wM0) preserving relative differences; Dale signs
         untouched (we operate on |w|); energy setpoints track the new state - no
-        upward compensation (renorm in train() does not undo sleep). rate is protocol (like 0.85)."""
+        upward compensation (renorm in train() does not undo sleep). rate is protocol (like 0.85).
+        Tagged KC->MBON edges (learned since last sleep) wash at 1/10 rate
+        (synaptic tagging/capture, Frey & Morris 1997-like); tags clear after sleep."""
+        _tag = sorted(getattr(self, "_km_tag", set()))
+        _tag = [int(e) for e in _tag if 0 <= int(e) < len(self.wM)]
         for _ in range(episodes):
             self.wM[:] = (self.wM - rate * (self.wM - self.wM0)).astype(np.float32)
+            if _tag:
+                # undo 90% of this episode's wash on tagged edges:
+                # washed w = pre - r(pre-w0) -> pre-w0 = (w-w0)/(1-r);
+                # want pre - 0.1r(pre-w0) = w + 0.9r(w-w0)/(1-r)
+                _w = self.wM[_tag].astype(np.float64)
+                _w0 = self.wM0[_tag].astype(np.float64)
+                _f = 0.9 * rate / max(1.0 - rate, 1e-9)
+                self.wM[_tag] = (_w + _f * (_w - _w0)).astype(np.float32)
+        self._km_tag = set()
         cur = np.zeros(len(self.MBON)); np.add.at(cur, self.km_mi, self.wM[self.km_mask].astype(float))
         self.ref_mb[:] = cur
         if self.mode in ("full", "banc", "mcns"):
@@ -2263,21 +2287,27 @@ class FlyBrainAPI:
 
     def train(self, image=None, odor=None, mech=None, alpn=None, reward=0.0, punish=0.0, pure=True, thr=0.0,
               odor_left=None, odor_right=None, mech_left=None, mech_right=None, gated=True, hops=None, vpol="lum",
-              stdp=False):
-        """stdp=True (spike mode only): trace-STDP in the sim loop replaces the
-        rate eligibility block below; DAN slab still applies (no 3rd factor yet).
-        reward>0 (PAM: weakens avoid) / punish>0 (PPL1: weakens approach). Returns post-learning step().
-        gated=True: memory-protecting DAN - depression weighted by KC uniqueness against
-        registered codes (x_remember): shared KC spared (x1.0), unique x0.85.
-        No codes: legacy slab. gated=False: always legacy slab.
-        hops=None -> default from set_hops() (full 2, mb 1)."""
+              stdp=False, dan_block=False):
+        """THIRD-FACTOR (DAN-gated) KC->MBON plasticity on real FlyWire synapses.
+        reward>0 drives PAM / punish>0 drives PPL1 (dan_rew/dan_pun US pathway);
+        the measured DAN activity GATES the update: no DAN firing -> no learning
+        (s = clip(DAN/DAN_ref), self-calibrated per mode+activation on first US).
+        PAM depresses active KC->avoid-MBON, PPL1 active KC->approach-MBON
+        (Handler 2019 / Hige 2015 compartment logic; magnitudes = legacy slab).
+        dan_block=True = optogenetic DAN block control (US without DAN -> s=0).
+        stdp=True (spike only): trace-STDP in-loop + gated slab below.
+        gated=True: KC-uniqueness weighting (x_remember codes); False: legacy.
+        hops=None -> default from set_hops(). Returns post-learning step()."""
         if hops is None:
             hops = int(getattr(self, "_hops", 2 if self.mode in ("full", "banc", "mcns") else 1))
         else:
             hops = int(hops)
+        _rw = 0.0 if dan_block else float(reward)
+        _pu = 0.0 if dan_block else float(punish)
         idx, val, _ = self.encode(image=image, odor=odor, mech=mech, alpn=alpn,
                                   odor_left=odor_left, odor_right=odor_right,
-                                  mech_left=mech_left, mech_right=mech_right, vpol=vpol)
+                                  mech_left=mech_left, mech_right=mech_right, vpol=vpol,
+                                  dan_rew=_rw, dan_pun=_pu)
         _spk = str(getattr(self, "_act", "relu")) == "spike"
         if _spk:
             if stdp and pure:
@@ -2293,6 +2323,34 @@ class FlyBrainAPI:
             h = self._forward_full(idx, val) if self.mode in ("full", "banc", "mcns") else self._forward_mb(idx, val)
             kcs = h[self.KC].mean(axis=1)
         m = kcs >= np.sort(kcs)[-max(1, int(len(kcs)*0.05))]
+        # --- third factor: measured DAN activity gates learning ---
+        _ha = h.mean(axis=1).astype(np.float32) if getattr(h, "ndim", 1) > 1 else h
+        _dpam = float(_ha[np.asarray(self.dan_pam, dtype=np.int32)].mean()) if len(self.dan_pam) else 0.0
+        _dppl = float(_ha[np.asarray(self.dan_ppl, dtype=np.int32)].mean()) if len(self.dan_ppl) else 0.0
+        _s_r = _s_p = 0.0
+        if (_rw > 0 or _pu > 0):
+            _dr = getattr(self, "_dan_ref", None)
+            if _dr is None:
+                # self-calibration: US-alone response, cached per instance
+                # (units follow the active forward: rate or Hz)
+                _uix, _uval, _ = self.encode(dan_rew=1.0, dan_pun=1.0)
+                if _spk:
+                    _uh = self._forward_spike(_uix, _uval)
+                elif pure:
+                    _uh = self._forward_pure(_uix, _uval, hops=hops, thr=thr) \
+                        if self.mode in ("full", "banc", "mcns") \
+                        else self._forward_pure_mb(_uix, _uval, hops=hops, thr=thr)
+                else:
+                    _uh = self._forward_full(_uix, _uval) if self.mode in ("full", "banc", "mcns") \
+                        else self._forward_mb(_uix, _uval)
+                    _uh = _uh.mean(axis=1).astype(np.float32)
+                _dr = {"pam": float(_uh[np.asarray(self.dan_pam, dtype=np.int32)].mean())
+                       if len(self.dan_pam) else 0.0,
+                       "pun": float(_uh[np.asarray(self.dan_ppl, dtype=np.int32)].mean())
+                       if len(self.dan_ppl) else 0.0}
+                self._dan_ref = _dr
+            _s_r = float(np.clip(_dpam / (_dr["pam"] + 1e-9), 0.0, 1.0)) if _rw > 0 else 0.0
+            _s_p = float(np.clip(_dppl / (_dr["pun"] + 1e-9), 0.0, 1.0)) if _pu > 0 else 0.0
         if self.mode in ("full", "banc", "mcns") and reward != 0 and not (_spk and stdp):
             a = h if pure else h.mean(axis=1).astype(np.float32)
             for s in range(0, self.E, self.CH):
@@ -2300,7 +2358,7 @@ class FlyBrainAPI:
                 self.elig[e] = self.elig[e]*0.9 + (a[self.pre[e]]*a[self.post[e]]).astype(np.float32)
             for s in range(0, self.E, self.CH):
                 e = slice(s, min(s+self.CH, self.E))
-                dw = np.clip(0.002*float(reward)*self.elig[e], -0.02*self.wM[e], 0.02*self.wM[e])
+                dw = np.clip(0.002*float(reward)*_s_r*self.elig[e], -0.02*self.wM[e], 0.02*self.wM[e])
                 self.wM[e] = np.clip(self.wM[e]+dw-1e-6, 0.05, 650.0)
             cur = np.zeros(self.N); np.add.at(cur, self.post, self.wM.astype(float))
             sc = np.ones(self.N); nz = cur > 1e-9
@@ -2323,18 +2381,29 @@ class FlyBrainAPI:
                 fkc = np.full(len(kmki), 0.85, np.float32)
         else:
             fkc = None
+        _kidx = np.where(self.km_mask)[0]
+        if getattr(self, "_km_tag", None) is None:
+            self._km_tag = set()
         if reward > 0:
             sel = self.km_is_avoid & m[self.km_ki]
             if fkc is None:
-                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*0.85, self.wM[self.km_mask])
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-0.15*_s_r),
+                                                 self.wM[self.km_mask])
             else:
-                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*fkc, self.wM[self.km_mask])
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-(1.0-fkc)*_s_r),
+                                                 self.wM[self.km_mask])
+            if _s_r > 0:
+                self._km_tag.update(_kidx[sel].tolist())
         if punish > 0:
             sel = self.km_is_approach & m[self.km_ki]
             if fkc is None:
-                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*0.85, self.wM[self.km_mask])
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-0.15*_s_p),
+                                                 self.wM[self.km_mask])
             else:
-                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*fkc, self.wM[self.km_mask])
+                self.wM[self.km_mask] = np.where(sel, self.wM[self.km_mask]*(1.0-(1.0-fkc)*_s_p),
+                                                 self.wM[self.km_mask])
+            if _s_p > 0:
+                self._km_tag.update(_kidx[sel].tolist())
         self.wM[self.km_mask] = np.maximum(self.wM[self.km_mask], 0.05)
         cur = np.zeros(len(self.MBON)); np.add.at(cur, self.km_mi, self.wM[self.km_mask].astype(float))
         sc = np.ones(len(self.MBON)); nz = cur > 1e-9
